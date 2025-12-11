@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+*.egg-info/
+dist/
+build/
+
+# Data & outputs (created on run)
+results/
+cache/
+data/
+*.csv
+*.pt
+*.pth
+*.parquet
+
+# Logs
+*.log
+wandb/
+lightning_logs/
+logs/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
