@@ -1,13 +1,4 @@
-"""
-Random Fourier Features (RFF) for fast GP approximation.
-
-Implements the approach from:
-- Rahimi & Recht (2007) "Random Features for Large-Scale Kernel Machines"
-- Extended to Matern kernels via spectral density sampling
-
-For Matern kernels, frequencies are sampled from the spectral density
-which is a scaled Student-t distribution.
-"""
+"""Random Fourier Features (RFF) for fast GP approximation on planar coordinates."""
 
 import torch
 import torch.nn as nn
@@ -18,19 +9,7 @@ from tqdm import tqdm
 
 
 class PlanarRFF(nn.Module):
-    """
-    Random Fourier Features for planar coordinates.
-
-    Approximates shift-invariant kernels (RBF, Matern) using random features.
-
-    Args:
-        input_dim: Input dimensionality (typically 2 for lon/lat)
-        num_features: Number of random features
-        lengthscale: Kernel lengthscale (scalar or per-dimension)
-        kernel_type: "rbf", "matern32", or "matern52"
-        trainable_lengthscale: Whether to make lengthscale a learnable parameter
-        seed: Random seed for frequency sampling
-    """
+    """Random Fourier Features approximating shift-invariant kernels (RBF, Matern)."""
 
     def __init__(
         self,
@@ -76,15 +55,7 @@ class PlanarRFF(nn.Module):
         num_features: int,
         input_dim: int
     ) -> np.ndarray:
-        """
-        Sample frequencies from kernel spectral density.
-
-        For RBF: omega ~ N(0, 1)
-        For Matern: omega ~ scaled StudentT(2*nu)
-
-        Returns:
-            [num_features, input_dim] array of frequencies
-        """
+        """Sample frequencies from kernel spectral density."""
         if kernel_type == "rbf":
             # RBF spectral density is Gaussian
             omega = rng.standard_normal(size=(num_features, input_dim))
@@ -116,15 +87,7 @@ class PlanarRFF(nn.Module):
         return torch.exp(self.log_lengthscale)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Compute random Fourier features.
-
-        Args:
-            x: [N, input_dim] input coordinates (should be normalized to [0, 1])
-
-        Returns:
-            [N, num_features] feature vector
-        """
+        """Compute random Fourier features. x: [N, D] -> [N, num_features]."""
         # Scale inputs by lengthscale
         # omega is already sampled for unit lengthscale, so divide by lengthscale
         scaled_x = x / self.lengthscale
@@ -139,16 +102,7 @@ class PlanarRFF(nn.Module):
 
 
 class RFFRegression(nn.Module):
-    """
-    Bayesian Linear Regression on RFF features.
-
-    For closed-form posterior inference with Gaussian likelihood.
-
-    Args:
-        rff_module: PlanarRFF feature extractor
-        prior_precision: Precision (inverse variance) of the prior on weights
-        noise_precision: Precision of the observation noise
-    """
+    """Bayesian linear regression on RFF features (closed-form posterior)."""
 
     def __init__(
         self,
@@ -166,13 +120,7 @@ class RFFRegression(nn.Module):
         self.register_buffer('posterior_covar', None)
 
     def fit(self, train_x: torch.Tensor, train_y: torch.Tensor) -> None:
-        """
-        Compute closed-form Bayesian linear regression posterior.
-
-        Args:
-            train_x: [N, input_dim] training inputs (normalized)
-            train_y: [N] training targets
-        """
+        """Compute closed-form Bayesian linear regression posterior."""
         # Compute features
         Phi = self.rff(train_x)  # [N, D]
         D = Phi.shape[1]
@@ -206,15 +154,7 @@ class RFFRegression(nn.Module):
         self.posterior_covar = posterior_covar
 
     def predict(self, test_x: torch.Tensor) -> Dict[str, torch.Tensor]:
-        """
-        Make predictions with uncertainty.
-
-        Args:
-            test_x: [N, input_dim] test inputs (normalized)
-
-        Returns:
-            Dictionary with 'mean', 'variance'
-        """
+        """Predict with uncertainty. Returns dict with 'mean', 'variance'."""
         if self.posterior_mean is None:
             raise RuntimeError("Model must be fitted before prediction")
 
@@ -237,16 +177,7 @@ class RFFRegression(nn.Module):
 
 
 class RFFClassification(nn.Module):
-    """
-    Logistic Regression on RFF features for classification.
-
-    Uses gradient descent for training (no closed-form solution for logistic).
-
-    Args:
-        rff_module: PlanarRFF feature extractor
-        num_classes: Number of output classes
-        l2_reg: L2 regularization strength
-    """
+    """Logistic regression on RFF features for classification."""
 
     def __init__(
         self,
@@ -263,15 +194,7 @@ class RFFClassification(nn.Module):
         self.classifier = nn.Linear(rff_module.num_features, num_classes)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Forward pass.
-
-        Args:
-            x: [N, input_dim] input coordinates
-
-        Returns:
-            [N, num_classes] logits
-        """
+        """Forward pass. Returns [N, num_classes] logits."""
         features = self.rff(x)
         return self.classifier(features)
 
@@ -284,20 +207,7 @@ class RFFClassification(nn.Module):
         lr: float = 0.01,
         verbose: bool = True
     ) -> list:
-        """
-        Train the classifier using cross-entropy loss.
-
-        Args:
-            train_x: [N, input_dim] training inputs (normalized)
-            train_y: [N] training class labels
-            num_epochs: Number of training epochs
-            batch_size: Minibatch size
-            lr: Learning rate
-            verbose: Print progress
-
-        Returns:
-            List of training losses
-        """
+        """Train using cross-entropy loss. Returns list of training losses."""
         device = train_x.device
 
         # Create data loader
@@ -334,15 +244,7 @@ class RFFClassification(nn.Module):
 
     @torch.no_grad()
     def predict(self, test_x: torch.Tensor) -> Dict[str, torch.Tensor]:
-        """
-        Make predictions.
-
-        Args:
-            test_x: [N, input_dim] test inputs
-
-        Returns:
-            Dictionary with 'probs' and 'predictions'
-        """
+        """Predict. Returns dict with 'probs' and 'predictions'."""
         logits = self(test_x)
         probs = torch.softmax(logits, dim=1)
         predictions = probs.argmax(dim=1)
@@ -365,24 +267,7 @@ def train_rff_regression(
     seed: int = 42,
     verbose: bool = True
 ) -> Tuple[RFFRegression, Dict]:
-    """
-    Train an RFF regression model with Bayesian linear regression.
-
-    Args:
-        train_x: [N, input_dim] training inputs (should be normalized)
-        train_y: [N] training targets
-        num_features: Number of random features
-        kernel_type: Kernel to approximate
-        lengthscale: Kernel lengthscale (None = use median heuristic)
-        prior_precision: Weight prior precision
-        noise_precision: Observation noise precision
-        device: Device to use
-        seed: Random seed
-        verbose: Print progress
-
-    Returns:
-        Tuple of (model, metadata dict)
-    """
+    """Train RFF regression with Bayesian linear regression. Returns (model, metadata)."""
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -445,27 +330,7 @@ def train_rff_classification(
     seed: int = 42,
     verbose: bool = True
 ) -> Tuple[RFFClassification, Dict]:
-    """
-    Train an RFF classification model with logistic regression.
-
-    Args:
-        train_x: [N, input_dim] training inputs (should be normalized)
-        train_y: [N] training class labels
-        num_classes: Number of classes
-        num_features: Number of random features
-        kernel_type: Kernel to approximate
-        lengthscale: Kernel lengthscale (None = use median heuristic)
-        l2_reg: L2 regularization
-        num_epochs: Training epochs
-        batch_size: Minibatch size
-        lr: Learning rate
-        device: Device to use
-        seed: Random seed
-        verbose: Print progress
-
-    Returns:
-        Tuple of (model, metadata dict)
-    """
+    """Train RFF classification with logistic regression. Returns (model, metadata)."""
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -518,18 +383,7 @@ def evaluate_rff_regression(
     y_min: Optional[float] = None,
     y_max: Optional[float] = None
 ) -> Dict[str, float]:
-    """
-    Evaluate RFF regression model.
-
-    Args:
-        model: Trained RFFRegression
-        test_x: Test inputs (normalized)
-        test_y: True targets
-        y_min, y_max: For denormalization
-
-    Returns:
-        Dictionary with MSE, MAE, R2
-    """
+    """Evaluate RFF regression. Returns dict with MSE, MAE, R2."""
     # Ensure test data is on same device as model
     device = model.rff.omega.device
     test_x = test_x.to(device)
@@ -563,17 +417,7 @@ def evaluate_rff_classification(
     test_x: torch.Tensor,
     test_y: torch.Tensor
 ) -> Dict[str, float]:
-    """
-    Evaluate RFF classification model.
-
-    Args:
-        model: Trained RFFClassification
-        test_x: Test inputs
-        test_y: True labels
-
-    Returns:
-        Dictionary with accuracy
-    """
+    """Evaluate RFF classification. Returns dict with accuracy."""
     # Ensure test data is on same device as model
     device = model.rff.omega.device
     test_x = test_x.to(device)

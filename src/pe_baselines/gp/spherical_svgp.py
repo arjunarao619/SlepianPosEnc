@@ -1,16 +1,4 @@
-"""
-Spherical SVGP using geometric-kernels for proper spherical Matern kernels.
-
-This is essential for polar data (like Arctic MSS) where planar approximations
-fail due to projection distortions near the poles.
-
-Requires: geometric-kernels package
-  pip install geometric-kernels
-
-The geometric-kernels package provides Matern kernels defined using the
-geodesic distance on the sphere, with the heat kernel expansion truncated
-at a specified level (nu parameter controls smoothness).
-"""
+"""Spherical SVGP using geometric-kernels for geodesic Matern kernels on S²."""
 
 import torch
 import torch.nn as nn
@@ -49,16 +37,7 @@ from .utils import lonlat_to_cartesian3d
 
 
 class GeometricSphericalMaternKernel(Kernel if HAVE_GPYTORCH else object):
-    """
-    GPyTorch-compatible wrapper for geometric-kernels spherical Matern.
-
-    The kernel is defined on the 2-sphere (S^2) using geodesic distances.
-    Inputs should be 3D Cartesian coordinates on the unit sphere.
-
-    Args:
-        nu: Matern smoothness parameter (0.5, 1.5, 2.5, etc.)
-        num_levels: Number of levels for heat kernel truncation
-    """
+    """GPyTorch wrapper for geometric-kernels spherical Matern. Inputs: 3D Cartesian on S²."""
 
     is_stationary = True
 
@@ -137,17 +116,7 @@ class GeometricSphericalMaternKernel(Kernel if HAVE_GPYTORCH else object):
 
 
 class SphericalSVGPRegression(ApproximateGP if HAVE_GPYTORCH else object):
-    """
-    SVGP with spherical Matern kernel for regression.
-
-    Uses geometric-kernels for proper geodesic distance computation.
-
-    Args:
-        inducing_points: [M, 3] initial inducing points on unit sphere
-        nu: Matern smoothness parameter
-        num_levels: Truncation level for heat kernel expansion
-        learn_inducing_locations: Whether to optimize inducing points
-    """
+    """SVGP with spherical Matern kernel using geodesic distance."""
 
     def __init__(
         self,
@@ -184,19 +153,7 @@ class SphericalSVGPRegression(ApproximateGP if HAVE_GPYTORCH else object):
 
 
 class ApproximateSphericalMaternKernel(Kernel if HAVE_GPYTORCH else object):
-    """
-    Approximate spherical Matern using geodesic distance and standard Matern.
-
-    This is a simpler alternative when geometric-kernels is not available.
-    It computes geodesic distances between 3D points and applies the
-    standard Matern function to those distances.
-
-    Note: This is an approximation - the true spherical Matern has a different
-    spectral structure, but this works well in practice for small regions.
-
-    Args:
-        nu: Smoothness parameter (0.5, 1.5, 2.5)
-    """
+    """Approximate spherical Matern: standard Matern applied to geodesic distances."""
 
     is_stationary = True
 
@@ -225,16 +182,7 @@ class ApproximateSphericalMaternKernel(Kernel if HAVE_GPYTORCH else object):
         return torch.nn.functional.softplus(self.raw_outputscale)
 
     def _geodesic_distance(self, x1: torch.Tensor, x2: torch.Tensor) -> torch.Tensor:
-        """
-        Compute geodesic distances between points on unit sphere.
-
-        Args:
-            x1: [N, 3] points on unit sphere
-            x2: [M, 3] points on unit sphere
-
-        Returns:
-            [N, M] matrix of geodesic distances in radians
-        """
+        """Compute geodesic distances between points on unit sphere."""
         # Cosine of angle = dot product (since points are on unit sphere)
         cos_angle = x1 @ x2.T  # [N, M]
 
@@ -281,17 +229,7 @@ class ApproximateSphericalMaternKernel(Kernel if HAVE_GPYTORCH else object):
 
 
 class ApproximateSphericalSVGP(ApproximateGP if HAVE_GPYTORCH else object):
-    """
-    SVGP with approximate spherical Matern kernel.
-
-    Uses geodesic distances for kernel computation, works without
-    geometric-kernels but is an approximation of the true spherical Matern.
-
-    Args:
-        inducing_points: [M, 3] initial inducing points on unit sphere
-        nu: Matern smoothness (0.5, 1.5, 2.5)
-        learn_inducing_locations: Whether to optimize inducing points
-    """
+    """SVGP with approximate spherical Matern (geodesic distance + standard Matern)."""
 
     def __init__(
         self,
@@ -337,26 +275,7 @@ def train_spherical_svgp_regression(
     seed: int = 42,
     verbose: bool = True
 ) -> Tuple[nn.Module, GaussianLikelihood, List[float]]:
-    """
-    Train a spherical SVGP regression model.
-
-    Args:
-        train_coords: [N, 2] training coordinates (lon, lat) in degrees
-        train_y: [N] training targets
-        num_inducing: Number of inducing points
-        nu: Matern smoothness
-        use_geometric_kernels: Use geometric-kernels if available
-        learn_inducing_locations: Optimize inducing points
-        num_epochs: Training epochs
-        batch_size: Minibatch size
-        lr: Learning rate
-        device: Device to use
-        seed: Random seed
-        verbose: Print progress
-
-    Returns:
-        Tuple of (model, likelihood, loss_history)
-    """
+    """Train spherical SVGP regression. Returns (model, likelihood, loss_history)."""
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -452,18 +371,7 @@ def predict_spherical_svgp(
     test_coords: torch.Tensor,
     batch_size: int = 2048
 ) -> Dict[str, torch.Tensor]:
-    """
-    Make predictions with a spherical SVGP model.
-
-    Args:
-        model: Trained model
-        likelihood: Associated likelihood
-        test_coords: [N, 2] test coordinates (lon, lat) in degrees
-        batch_size: Batch size
-
-    Returns:
-        Dictionary with 'mean', 'variance'
-    """
+    """Predict with spherical SVGP. Returns dict with 'mean', 'variance'."""
     model.eval()
     likelihood.eval()
 
@@ -497,17 +405,7 @@ def evaluate_spherical_svgp(
     y_min: Optional[float] = None,
     y_max: Optional[float] = None
 ) -> Dict[str, float]:
-    """
-    Evaluate spherical SVGP predictions.
-
-    Args:
-        predictions: Dictionary from predict_spherical_svgp
-        targets: True targets
-        y_min, y_max: For denormalization
-
-    Returns:
-        Dictionary with MSE, MAE, R2
-    """
+    """Evaluate spherical SVGP. Returns dict with MSE, MAE, R2."""
     pred_mean = predictions['mean']
 
     mse = ((pred_mean - targets) ** 2).mean().item()

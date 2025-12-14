@@ -1,9 +1,4 @@
-"""
-Sparse Variational Gaussian Process (SVGP) models.
-
-Scales to large datasets (>100K points) via inducing points.
-Uses GPyTorch ApproximateGP with VariationalStrategy.
-"""
+"""Sparse Variational GP (SVGP) models using inducing points."""
 
 import torch
 import torch.nn as nn
@@ -27,15 +22,7 @@ from .utils import init_inducing_points_kmeans
 
 
 class SVGPRegression(ApproximateGP):
-    """
-    Sparse Variational GP for regression.
-
-    Args:
-        inducing_points: [M, D] initial inducing point locations
-        kernel_type: "rbf", "matern32", or "matern52"
-        ard: Use Automatic Relevance Determination
-        learn_inducing_locations: Whether to optimize inducing point locations
-    """
+    """Sparse Variational GP for regression."""
 
     def __init__(
         self,
@@ -82,18 +69,7 @@ class SVGPRegression(ApproximateGP):
 
 
 class SVGPClassification(ApproximateGP):
-    """
-    Sparse Variational GP for multi-class classification.
-
-    Uses independent GPs for each class with softmax likelihood.
-
-    Args:
-        inducing_points: [M, D] initial inducing point locations
-        num_classes: Number of output classes
-        kernel_type: "rbf", "matern32", or "matern52"
-        ard: Use Automatic Relevance Determination
-        learn_inducing_locations: Whether to optimize inducing point locations
-    """
+    """Sparse Variational GP for multi-class classification with softmax likelihood."""
 
     def __init__(
         self,
@@ -180,27 +156,7 @@ def train_svgp_regression(
     seed: int = 42,
     verbose: bool = True
 ) -> Tuple[SVGPRegression, GaussianLikelihood, List[float]]:
-    """
-    Train a Sparse Variational GP regression model.
-
-    Args:
-        train_x: [N, D] training inputs (normalized coordinates)
-        train_y: [N] training targets
-        num_inducing: Number of inducing points
-        kernel_type: Kernel to use
-        ard: Use ARD lengthscales
-        learn_inducing_locations: Optimize inducing point locations
-        num_epochs: Number of training epochs
-        batch_size: Minibatch size
-        lr: Learning rate
-        device: Device to train on
-        inducing_init: "kmeans" or "random" initialization
-        seed: Random seed for initialization
-        verbose: Print progress
-
-    Returns:
-        Tuple of (model, likelihood, loss_history)
-    """
+    """Train SVGP regression. Returns (model, likelihood, loss_history)."""
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -297,28 +253,7 @@ def train_svgp_classification(
     seed: int = 42,
     verbose: bool = True
 ) -> Tuple[SVGPClassification, SoftmaxLikelihood, List[float]]:
-    """
-    Train a Sparse Variational GP classification model.
-
-    Args:
-        train_x: [N, D] training inputs (normalized coordinates)
-        train_y: [N] training class labels (integers)
-        num_classes: Number of classes
-        num_inducing: Number of inducing points
-        kernel_type: Kernel to use
-        ard: Use ARD lengthscales
-        learn_inducing_locations: Optimize inducing point locations
-        num_epochs: Number of training epochs
-        batch_size: Minibatch size
-        lr: Learning rate
-        device: Device to train on
-        inducing_init: "kmeans" or "random" initialization
-        seed: Random seed
-        verbose: Print progress
-
-    Returns:
-        Tuple of (model, likelihood, loss_history)
-    """
+    """Train SVGP classification. Returns (model, likelihood, loss_history)."""
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -411,18 +346,7 @@ def predict_svgp_regression(
     test_x: torch.Tensor,
     batch_size: int = 2048
 ) -> Dict[str, torch.Tensor]:
-    """
-    Make predictions with a trained SVGP regression model.
-
-    Args:
-        model: Trained SVGPRegression
-        likelihood: Associated likelihood
-        test_x: [N, D] test inputs
-        batch_size: Batch size for prediction
-
-    Returns:
-        Dictionary with 'mean', 'variance', 'lower', 'upper' tensors
-    """
+    """Predict with SVGP regression. Returns dict with 'mean', 'variance', 'lower', 'upper'."""
     model.eval()
     likelihood.eval()
 
@@ -463,19 +387,7 @@ def predict_svgp_classification(
     batch_size: int = 2048,
     num_samples: int = 64
 ) -> Dict[str, torch.Tensor]:
-    """
-    Make predictions with a trained SVGP classification model.
-
-    Args:
-        model: Trained SVGPClassification
-        likelihood: Associated likelihood
-        test_x: [N, D] test inputs
-        batch_size: Batch size for prediction
-        num_samples: Number of MC samples for prediction
-
-    Returns:
-        Dictionary with 'probs' (class probabilities) and 'predictions' (argmax)
-    """
+    """Predict with SVGP classification. Returns dict with 'probs' and 'predictions'."""
     model.eval()
     likelihood.eval()
 
@@ -509,18 +421,7 @@ def evaluate_svgp_regression(
     y_min: Optional[float] = None,
     y_max: Optional[float] = None
 ) -> Dict[str, float]:
-    """
-    Compute regression metrics.
-
-    Args:
-        predictions: Dictionary from predict_svgp_regression
-        targets: True targets
-        y_min: Original target minimum (for denormalization)
-        y_max: Original target maximum (for denormalization)
-
-    Returns:
-        Dictionary with MSE, MAE, R2, and optionally MAE in original scale
-    """
+    """Compute regression metrics (MSE, MAE, R2)."""
     pred_mean = predictions['mean']
 
     mse = ((pred_mean - targets) ** 2).mean().item()
@@ -547,16 +448,7 @@ def evaluate_svgp_classification(
     predictions: Dict[str, torch.Tensor],
     targets: torch.Tensor
 ) -> Dict[str, float]:
-    """
-    Compute classification metrics.
-
-    Args:
-        predictions: Dictionary from predict_svgp_classification
-        targets: True class labels
-
-    Returns:
-        Dictionary with accuracy
-    """
+    """Compute classification accuracy."""
     pred_classes = predictions['predictions']
     accuracy = (pred_classes == targets).float().mean().item()
 

@@ -1,8 +1,4 @@
-"""
-Exact Gaussian Process models for regression and classification.
-
-Uses GPyTorch for implementation. Suitable for datasets up to ~30K points.
-"""
+"""Exact GP models for regression and classification using GPyTorch."""
 
 import torch
 import torch.nn as nn
@@ -18,16 +14,7 @@ from tqdm import tqdm
 
 
 class ExactGPRegression(ExactGP):
-    """
-    Exact GP for regression with configurable kernel.
-
-    Args:
-        train_x: [N, D] training inputs
-        train_y: [N] training targets
-        likelihood: GP likelihood (default: GaussianLikelihood)
-        kernel_type: "rbf", "matern32", or "matern52"
-        ard: Use Automatic Relevance Determination (per-dimension lengthscales)
-    """
+    """Exact GP for regression with configurable kernel (RBF, Matern)."""
 
     def __init__(
         self,
@@ -65,19 +52,7 @@ class ExactGPRegression(ExactGP):
 
 
 class ExactGPClassification(ExactGP):
-    """
-    Exact GP for multi-class classification using Dirichlet transformation.
-
-    This uses the approach from gpytorch where targets are transformed to
-    a Dirichlet space and multiple GPs are fit (one per class).
-
-    Args:
-        train_x: [N, D] training inputs
-        train_y: [N] training class labels (integers 0 to num_classes-1)
-        num_classes: Number of classes
-        kernel_type: "rbf", "matern32", or "matern52"
-        ard: Use Automatic Relevance Determination
-    """
+    """Exact GP for multi-class classification using Dirichlet transformation."""
 
     def __init__(
         self,
@@ -144,22 +119,7 @@ def train_exact_gp_regression(
     device: Optional[torch.device] = None,
     verbose: bool = True
 ) -> Tuple[ExactGPRegression, GaussianLikelihood, List[float]]:
-    """
-    Train an Exact GP regression model.
-
-    Args:
-        train_x: [N, D] training inputs (normalized coordinates)
-        train_y: [N] training targets
-        kernel_type: Kernel to use
-        ard: Use ARD lengthscales
-        num_iterations: Number of optimization iterations
-        lr: Learning rate for Adam optimizer
-        device: Device to train on (default: auto-detect)
-        verbose: Print progress
-
-    Returns:
-        Tuple of (model, likelihood, loss_history)
-    """
+    """Train an Exact GP regression model. Returns (model, likelihood, loss_history)."""
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -214,23 +174,7 @@ def train_exact_gp_classification(
     device: Optional[torch.device] = None,
     verbose: bool = True
 ) -> Tuple[ExactGPClassification, DirichletClassificationLikelihood, List[float]]:
-    """
-    Train an Exact GP classification model.
-
-    Args:
-        train_x: [N, D] training inputs (normalized coordinates)
-        train_y: [N] training class labels (integers)
-        num_classes: Number of classes
-        kernel_type: Kernel to use
-        ard: Use ARD lengthscales
-        num_iterations: Number of optimization iterations
-        lr: Learning rate
-        device: Device to train on
-        verbose: Print progress
-
-    Returns:
-        Tuple of (model, likelihood, loss_history)
-    """
+    """Train an Exact GP classification model. Returns (model, likelihood, loss_history)."""
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -280,18 +224,7 @@ def predict_regression(
     test_x: torch.Tensor,
     batch_size: int = 1000
 ) -> Dict[str, torch.Tensor]:
-    """
-    Make predictions with a trained GP regression model.
-
-    Args:
-        model: Trained ExactGPRegression
-        likelihood: Associated likelihood
-        test_x: [N, D] test inputs
-        batch_size: Batch size for prediction (for memory efficiency)
-
-    Returns:
-        Dictionary with 'mean', 'variance', 'lower', 'upper' tensors
-    """
+    """Predict with GP regression. Returns dict with 'mean', 'variance', 'lower', 'upper'."""
     model.eval()
     likelihood.eval()
 
@@ -331,18 +264,7 @@ def predict_classification(
     test_x: torch.Tensor,
     batch_size: int = 1000
 ) -> Dict[str, torch.Tensor]:
-    """
-    Make predictions with a trained GP classification model.
-
-    Args:
-        model: Trained ExactGPClassification
-        likelihood: Associated likelihood
-        test_x: [N, D] test inputs
-        batch_size: Batch size for prediction
-
-    Returns:
-        Dictionary with 'probs' (class probabilities) and 'predictions' (argmax)
-    """
+    """Predict with GP classification. Returns dict with 'probs' and 'predictions'."""
     model.eval()
     likelihood.eval()
 
@@ -381,18 +303,7 @@ def evaluate_regression(
     y_min: Optional[float] = None,
     y_max: Optional[float] = None
 ) -> Dict[str, float]:
-    """
-    Compute regression metrics.
-
-    Args:
-        predictions: Dictionary from predict_regression
-        targets: True targets
-        y_min: Original target minimum (for denormalization)
-        y_max: Original target maximum (for denormalization)
-
-    Returns:
-        Dictionary with MSE, MAE, R2, and optionally MAE in original scale
-    """
+    """Compute regression metrics (MSE, MAE, R2)."""
     pred_mean = predictions['mean']
 
     mse = ((pred_mean - targets) ** 2).mean().item()
@@ -419,16 +330,7 @@ def evaluate_classification(
     predictions: Dict[str, torch.Tensor],
     targets: torch.Tensor
 ) -> Dict[str, float]:
-    """
-    Compute classification metrics.
-
-    Args:
-        predictions: Dictionary from predict_classification
-        targets: True class labels
-
-    Returns:
-        Dictionary with accuracy
-    """
+    """Compute classification accuracy."""
     pred_classes = predictions['predictions']
     accuracy = (pred_classes == targets).float().mean().item()
 

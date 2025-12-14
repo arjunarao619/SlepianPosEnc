@@ -1,11 +1,4 @@
-"""
-Utility functions for GP baselines.
-
-Includes:
-- Coordinate transformations (lon/lat to normalized planar, 3D Cartesian)
-- Inducing point initialization (k-means clustering)
-- Median heuristic for lengthscale estimation
-"""
+"""Coordinate transforms and utilities for GP baselines."""
 
 import numpy as np
 import torch

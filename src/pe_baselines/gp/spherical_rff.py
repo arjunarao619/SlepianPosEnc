@@ -1,23 +1,4 @@
-"""
-Spherical Random Fourier Features using Gegenbauer polynomials.
-
-Based on the approach from:
-- Deep Random Features (DRF) paper, Appendix B.2
-- Dutordoir et al. "Sparse Gaussian Processes on Discrete Domains"
-
-For a Matern kernel on the sphere, we use the spherical harmonics expansion:
-k(x, x') = sum_l a_l * P_l(x · x')
-
-where P_l are Legendre polynomials (Gegenbauer with alpha=1/2) and a_l are
-the spectral coefficients of the Matern kernel on S^2.
-
-The random feature approximation samples:
-1. Frequency indices l from the spectral distribution
-2. Random reference points z on the sphere
-3. Evaluates Gegenbauer polynomials at the geodesic distance
-
-This gives features that approximate the spherical Matern kernel in the RKHS.
-"""
+"""Spherical Random Fourier Features using Legendre polynomials for Matern on S²."""
 
 import torch
 import torch.nn as nn
@@ -35,24 +16,7 @@ def matern_spectral_density_sphere(
     lengthscale: float,
     dim: int = 2
 ) -> np.ndarray:
-    """
-    Compute the spectral density (eigenvalues) of Matern kernel on the sphere.
-
-    For a Matern-nu kernel on S^d (d-dimensional sphere), the eigenvalues are:
-        a_l ~ (2l + d) * (l + d - 1)! / l! * [lengthscale^2 + l(l+d-1)]^(-nu - d/2)
-
-    For S^2 (d=2):
-        a_l ~ (2l + 2) / [lengthscale^2 + l(l+1)]^(nu + 1)
-
-    Args:
-        l: Array of frequency indices
-        nu: Matern smoothness
-        lengthscale: Kernel lengthscale
-        dim: Sphere dimension (2 for S^2)
-
-    Returns:
-        Array of spectral density values (not normalized)
-    """
+    """Compute spectral density of Matern kernel on S² (eigenvalues a_l)."""
     l = np.asarray(l, dtype=np.float64)
 
     if dim == 2:
@@ -75,19 +39,7 @@ def sample_spherical_frequencies(
     lmax: int = 50,
     seed: int = 42
 ) -> np.ndarray:
-    """
-    Sample frequency indices from the Matern spectral density on S^2.
-
-    Args:
-        num_features: Number of frequencies to sample
-        nu: Matern smoothness
-        lengthscale: Kernel lengthscale
-        lmax: Maximum frequency to consider
-        seed: Random seed
-
-    Returns:
-        [num_features] array of integer frequency indices
-    """
+    """Sample frequency indices from Matern spectral density on S²."""
     rng = np.random.default_rng(seed)
 
     # Compute unnormalized spectral density
@@ -104,16 +56,7 @@ def sample_spherical_frequencies(
 
 
 def sample_uniform_sphere(num_points: int, seed: int = 42) -> np.ndarray:
-    """
-    Sample points uniformly on the unit 2-sphere.
-
-    Args:
-        num_points: Number of points to sample
-        seed: Random seed
-
-    Returns:
-        [num_points, 3] array of points on unit sphere
-    """
+    """Sample points uniformly on the unit 2-sphere."""
     rng = np.random.default_rng(seed)
 
     # Use Gaussian sampling (standard multivariate normal normalized)
@@ -124,27 +67,7 @@ def sample_uniform_sphere(num_points: int, seed: int = 42) -> np.ndarray:
 
 
 class SphericalRFF(nn.Module):
-    """
-    Spherical Random Fourier Features using Legendre polynomials.
-
-    Approximates Matern kernel on S^2 using random features based on the
-    spherical harmonics expansion.
-
-    For each random feature:
-    - Sample a frequency l from the spectral density
-    - Sample a random reference point z on the sphere
-    - Feature = sqrt(weight) * P_l(x · z)
-
-    where P_l is the Legendre polynomial of degree l.
-
-    Args:
-        num_features: Number of random features
-        nu: Matern smoothness (0.5, 1.5, 2.5)
-        lengthscale: Kernel lengthscale (in radians on sphere)
-        lmax: Maximum frequency to consider
-        trainable_lengthscale: Make lengthscale learnable
-        seed: Random seed
-    """
+    """Spherical RFF using Legendre polynomials to approximate Matern on S²."""
 
     def __init__(
         self,
@@ -210,28 +133,11 @@ class SphericalRFF(nn.Module):
         return torch.exp(self.log_lengthscale)
 
     def _eval_legendre(self, l: int, x: np.ndarray) -> np.ndarray:
-        """
-        Evaluate Legendre polynomial P_l at values x.
-
-        Args:
-            l: Degree of polynomial
-            x: Values in [-1, 1] (cosines of angles)
-
-        Returns:
-            P_l(x)
-        """
+        """Evaluate Legendre polynomial P_l at values x in [-1, 1]."""
         return eval_legendre(l, x)
 
     def forward(self, coords: torch.Tensor) -> torch.Tensor:
-        """
-        Compute spherical random features.
-
-        Args:
-            coords: Either [N, 2] (lon, lat in degrees) or [N, 3] (3D Cartesian)
-
-        Returns:
-            [N, num_features] feature vector
-        """
+        """Compute spherical RFF. coords: [N, 2] (lon,lat) or [N, 3] -> [N, num_features]."""
         # Convert to 3D if needed
         if coords.shape[1] == 2:
             x = lonlat_to_cartesian3d(coords)
@@ -265,16 +171,7 @@ class SphericalRFF(nn.Module):
 
 
 class SphericalRFFRegression(nn.Module):
-    """
-    Bayesian Linear Regression on spherical RFF features.
-
-    Similar to planar RFF but uses spherical random features.
-
-    Args:
-        rff_module: SphericalRFF feature extractor
-        prior_precision: Weight prior precision
-        noise_precision: Observation noise precision
-    """
+    """Bayesian linear regression on spherical RFF features."""
 
     def __init__(
         self,
@@ -291,13 +188,7 @@ class SphericalRFFRegression(nn.Module):
         self.register_buffer('posterior_covar', None)
 
     def fit(self, train_coords: torch.Tensor, train_y: torch.Tensor) -> None:
-        """
-        Compute closed-form Bayesian linear regression posterior.
-
-        Args:
-            train_coords: [N, 2] (lon, lat) or [N, 3] (3D) coordinates
-            train_y: [N] training targets
-        """
+        """Compute closed-form Bayesian linear regression posterior."""
         # Compute features
         Phi = self.rff(train_coords)  # [N, D]
         D = Phi.shape[1]
@@ -329,15 +220,7 @@ class SphericalRFFRegression(nn.Module):
         self.posterior_covar = posterior_covar
 
     def predict(self, test_coords: torch.Tensor) -> Dict[str, torch.Tensor]:
-        """
-        Make predictions with uncertainty.
-
-        Args:
-            test_coords: [N, 2] or [N, 3] test coordinates
-
-        Returns:
-            Dictionary with 'mean', 'variance'
-        """
+        """Predict with uncertainty. Returns dict with 'mean', 'variance'."""
         if self.posterior_mean is None:
             raise RuntimeError("Model must be fitted before prediction")
 
@@ -355,14 +238,7 @@ class SphericalRFFRegression(nn.Module):
 
 
 class SphericalRFFClassification(nn.Module):
-    """
-    Logistic Regression on spherical RFF features for classification.
-
-    Args:
-        rff_module: SphericalRFF feature extractor
-        num_classes: Number of output classes
-        l2_reg: L2 regularization strength
-    """
+    """Logistic regression on spherical RFF features for classification."""
 
     def __init__(
         self,
@@ -441,25 +317,7 @@ def train_spherical_rff_regression(
     seed: int = 42,
     verbose: bool = True
 ) -> Tuple[SphericalRFFRegression, Dict]:
-    """
-    Train a spherical RFF regression model.
-
-    Args:
-        train_coords: [N, 2] (lon, lat) in degrees
-        train_y: [N] training targets
-        num_features: Number of random features
-        nu: Matern smoothness
-        lengthscale: Kernel lengthscale (radians). None = estimate from data
-        lmax: Maximum frequency
-        prior_precision: Weight prior precision
-        noise_precision: Observation noise precision
-        device: Device to use
-        seed: Random seed
-        verbose: Print progress
-
-    Returns:
-        Tuple of (model, metadata dict)
-    """
+    """Train spherical RFF regression. Returns (model, metadata)."""
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -526,28 +384,7 @@ def train_spherical_rff_classification(
     seed: int = 42,
     verbose: bool = True
 ) -> Tuple[SphericalRFFClassification, Dict]:
-    """
-    Train a spherical RFF classification model.
-
-    Args:
-        train_coords: [N, 2] (lon, lat) in degrees
-        train_y: [N] training class labels
-        num_classes: Number of classes
-        num_features: Number of random features
-        nu: Matern smoothness
-        lengthscale: Kernel lengthscale (radians)
-        lmax: Maximum frequency
-        l2_reg: L2 regularization
-        num_epochs: Training epochs
-        batch_size: Minibatch size
-        lr: Learning rate
-        device: Device to use
-        seed: Random seed
-        verbose: Print progress
-
-    Returns:
-        Tuple of (model, metadata dict)
-    """
+    """Train spherical RFF classification. Returns (model, metadata)."""
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
