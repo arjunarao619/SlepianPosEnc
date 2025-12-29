@@ -16,7 +16,6 @@ Or process all CSVs in a directory:
         --csv-dir /path/to/csvs \
         --output-dir /path/to/output
 """
-
 import os
 import sys
 import time
