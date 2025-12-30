@@ -1,0 +1,9 @@
+{
+    "masks": "/scratch/local/arra4944_images/inat/data/masks/",
+    "env": "/scratch/local/arra4944_images/inat/data/env/", 
+    "train": "/scratch/local/arra4944_images/inat/data/train/", 
+    "geo_prior": "/scratch/local/arra4944_images/inat/data/eval/geo_prior/",
+    "snt": "/scratch/local/arra4944_images/inat/data/eval/snt/", 
+    "iucn": "/scratch/local/arra4944_images/inat/data/eval/iucn/", 
+    "geo_feature": "/scratch/local/arra4944_images/inat/data/eval/geo_feature/"
+} 
