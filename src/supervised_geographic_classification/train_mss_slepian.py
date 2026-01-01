@@ -140,6 +140,13 @@ def compute_slepian_features(
     if not HAVE_PYSH:
         raise ImportError("PySHTOOLS required for Slepian features")
 
+    # Cap num_modes at maximum possible: (L+1)^2
+    max_modes = (L_slepian + 1) ** 2
+    if num_modes > max_modes:
+        if verbose:
+            print(f"Warning: num_modes={num_modes} exceeds max={(L_slepian+1)**2} for L={L_slepian}, capping.")
+        num_modes = max_modes
+
     if verbose:
         print(f"Computing Slepian features:")
         print(f"  Cap center: {cap_center}, Radius: {cap_radius_deg}°")

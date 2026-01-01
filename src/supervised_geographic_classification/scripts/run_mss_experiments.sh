@@ -9,7 +9,7 @@ SRC_DIR="$(dirname "$PARENT_DIR")"
 ROOT_DIR="$(dirname "$SRC_DIR")"
 
 # Data path (must be set by user)
-DATA_PATH="${MSS_DATA_PATH:-/path/to/mss/data}"
+DATA_PATH="/scratch/local/arra4944_images/drf/Experiment_data/Experiment_data"
 
 if [ ! -d "$DATA_PATH" ]; then
     echo "Error: MSS data not found at $DATA_PATH"
@@ -24,13 +24,15 @@ FIGURES_DIR="$RESULTS_DIR/figures"
 mkdir -p "$RESULTS_DIR" "$CACHE_DIR" "$FIGURES_DIR"
 
 # Training parameters
-ARCHS="mlp resmlp siren glu"
-N_RUNS=5
+# ARCHS="mlp resmlp siren glu"
+ARCHS="mlp"
+
+N_RUNS=2
 EPOCHS=200
 BATCH_SIZE=2048
 PATIENCE=30
 NUM_WORKERS=16
-LABEL_FRACS="0.01 0.05 0.10 0.25 0.50 1.0"
+LABEL_FRACS="0.01,0.05,0.10,0.25,0.50,1.0"
 
 # Slepian parameters
 L_GLOBAL=10
@@ -42,7 +44,7 @@ echo "======================================"
 
 # Slepian experiments
 for ARCH in $ARCHS; do
-    for L in 40 64 80 120; do
+    for L in 10 20 30 40 50 60 70 80 90 100 110 120; do
         NUM_MODES=$(python -c "
 import numpy as np
 theta_rad = $CAP_RADIUS * np.pi / 180.0
@@ -67,7 +69,7 @@ done
 
 # Vanilla SH experiments
 for ARCH in $ARCHS; do
-    for L in 10 20 30 40; do
+    for L in 10 15 20 25 30 35 40 45 50 55 60; do
         echo "-> Vanilla SH L=$L, arch=$ARCH"
         python "$PARENT_DIR/train_mss_sh_vanilla.py" \
             --data-path "$DATA_PATH" \
