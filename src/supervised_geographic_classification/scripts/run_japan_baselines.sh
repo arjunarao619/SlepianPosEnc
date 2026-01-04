@@ -15,13 +15,13 @@ DATASET_DIR="$ROOT_DIR/data/japan"
 mkdir -p "$RESULTS_DIR" "$FIGURES_DIR"
 
 # Training parameters
-ARCHS="mlp resmlp siren glu"
+ARCHS="mlp"
 N_RUNS=3
 EPOCHS=200
 BATCH_SIZE=256
 PATIENCE=50
 NUM_WORKERS=8
-SAMPLES_PER_PREF="1 2 5 10 50 100"
+SAMPLES_PER_PREF="1,2,5,10,50,100"
 
 # Baseline encoders
 ENCODERS="direct,cartesian3d,wrap,grid,spherec,spherecplus,spherem,spheremplus,theory"
