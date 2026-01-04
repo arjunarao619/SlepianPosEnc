@@ -47,7 +47,15 @@ from .planar_rff import (
     train_rff_regression,
     train_rff_classification,
     evaluate_rff_regression,
-    evaluate_rff_classification
+    evaluate_rff_classification,
+    # Deep RFF (paper-aligned implementation)
+    DeepRFFLayer,
+    DeepRFFClassifier,
+    DeepRFFRegressor,
+    train_deep_rff_classification,
+    evaluate_deep_rff_classification,
+    train_deep_rff_regression,
+    evaluate_deep_rff_regression,
 )
 
 # Spherical SVGP
@@ -105,6 +113,14 @@ __all__ = [
     'train_rff_classification',
     'evaluate_rff_regression',
     'evaluate_rff_classification',
+    # Deep RFF (paper-aligned)
+    'DeepRFFLayer',
+    'DeepRFFClassifier',
+    'DeepRFFRegressor',
+    'train_deep_rff_classification',
+    'evaluate_deep_rff_classification',
+    'train_deep_rff_regression',
+    'evaluate_deep_rff_regression',
     # Spherical SVGP
     'ApproximateSphericalSVGP',
     'train_spherical_svgp_regression',

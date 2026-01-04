@@ -36,7 +36,6 @@ import numpy as np
 import pandas as pd
 import geopandas as gpd
 from shapely.geometry import Point, Polygon, MultiPolygon
-from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score
 import matplotlib.pyplot as plt
 from tqdm import tqdm
@@ -76,27 +75,104 @@ def sample_points_in_polygon(polygon: Polygon, n_points: int, seed: Optional[int
     """Sample n_points uniformly within a polygon using rejection sampling."""
     if seed is not None:
         np.random.seed(seed)
-    
+
     minx, miny, maxx, maxy = polygon.bounds
     points = []
     attempts = 0
     max_attempts = n_points * 100
-    
+
     while len(points) < n_points and attempts < max_attempts:
         n_try = min(n_points * 10, 10000)
         random_points = np.column_stack([
             np.random.uniform(minx, maxx, n_try),
             np.random.uniform(miny, maxy, n_try)
         ])
-        
+
         for lon, lat in random_points:
             if polygon.contains(Point(lon, lat)):
                 points.append([lon, lat])
                 if len(points) >= n_points:
                     break
         attempts += n_try
-    
+
     return np.array(points[:n_points])
+
+
+def sample_points_near_boundary(polygon: Polygon, n_points: int, buffer_dist: float = 0.02,
+                                 seed: Optional[int] = None) -> np.ndarray:
+    """Sample points in a thin ring near the polygon boundary."""
+    if seed is not None:
+        np.random.seed(seed)
+
+    eroded = polygon.buffer(-buffer_dist)
+    if eroded.is_empty or not eroded.is_valid:
+        eroded = polygon.buffer(-buffer_dist / 4)
+    if eroded.is_empty or not eroded.is_valid:
+        return sample_points_in_polygon(polygon, n_points, seed)
+
+    ring = polygon.difference(eroded)
+    if ring.is_empty or not ring.is_valid:
+        return sample_points_in_polygon(polygon, n_points, seed)
+
+    minx, miny, maxx, maxy = ring.bounds
+    points = []
+    attempts = 0
+    max_attempts = n_points * 200
+
+    while len(points) < n_points and attempts < max_attempts:
+        n_try = min(n_points * 20, 20000)
+        random_points = np.column_stack([
+            np.random.uniform(minx, maxx, n_try),
+            np.random.uniform(miny, maxy, n_try)
+        ])
+        for lon, lat in random_points:
+            if ring.contains(Point(lon, lat)):
+                points.append([lon, lat])
+                if len(points) >= n_points:
+                    break
+        attempts += n_try
+
+    if len(points) < n_points:
+        extra = sample_points_in_polygon(polygon, n_points - len(points), seed)
+        if len(extra) > 0:
+            points.extend(extra.tolist())
+
+    return np.array(points[:n_points])
+
+
+def _sample_from_geometry(geometry, n_points: int, near_boundary: bool,
+                          buffer_dist: float, seed: int) -> np.ndarray:
+    """Sample points from a geometry (Polygon or MultiPolygon)."""
+    sample_fn = sample_points_near_boundary if near_boundary else sample_points_in_polygon
+
+    if isinstance(geometry, MultiPolygon):
+        polygons = list(geometry.geoms)
+        if near_boundary:
+            perimeters = [p.length for p in polygons]
+            total = sum(perimeters)
+            weights = [l / total for l in perimeters]
+        else:
+            areas = [p.area for p in polygons]
+            total = sum(areas)
+            weights = [a / total for a in areas]
+
+        samples_list = []
+        for poly, w in zip(polygons, weights):
+            n = max(1, int(n_points * w))
+            if near_boundary:
+                pts = sample_fn(poly, n, buffer_dist=buffer_dist, seed=seed)
+            else:
+                pts = sample_fn(poly, n, seed=seed)
+            if len(pts) > 0:
+                samples_list.append(pts)
+        return np.vstack(samples_list) if samples_list else np.empty((0, 2))
+
+    elif isinstance(geometry, Polygon):
+        if near_boundary:
+            return sample_fn(geometry, n_points, buffer_dist=buffer_dist, seed=seed)
+        return sample_fn(geometry, n_points, seed=seed)
+
+    return np.empty((0, 2))
 
 
 def generate_japan_prefecture_dataset(
@@ -106,118 +182,90 @@ def generate_japan_prefecture_dataset(
     train_ratio: float = 0.7,
     val_ratio: float = 0.15,
     test_ratio: float = 0.15,
+    boundary_buffer: float = 0.02,
     seed: int = 42,
     verbose: bool = True
 ) -> Dict:
-    """Generate dataset for Japan prefecture classification."""
-    
+    """Generate dataset with train points random inside, test/val near boundaries."""
+
     os.makedirs(output_dir, exist_ok=True)
-    
+
     if verbose:
         print(f"Loading shapefile: {shapefile_path}")
-    
+
     gdf = gpd.read_file(shapefile_path)
-    
     if gdf.crs and gdf.crs != 'EPSG:4326':
         gdf = gdf.to_crs('EPSG:4326')
-    
+
     name_cols = [col for col in gdf.columns if 'NAME' in col.upper()]
     name_col = name_cols[0] if name_cols else None
-    
-    all_samples = []
+
+    n_train = int(samples_per_prefecture * train_ratio)
+    n_val = int(samples_per_prefecture * val_ratio)
+    n_test = samples_per_prefecture - n_train - n_val
+
+    train_samples, val_samples, test_samples = [], [], []
     prefecture_info = {}
-    
-    if verbose:
-        iterator = tqdm(gdf.iterrows(), total=len(gdf), desc="Sampling")
-    else:
-        iterator = gdf.iterrows()
-    
+
+    iterator = tqdm(gdf.iterrows(), total=len(gdf), desc="Sampling") if verbose else gdf.iterrows()
+
     for idx, row in iterator:
         geometry = row.geometry
-        prefecture_id = idx
-        
-        if isinstance(geometry, MultiPolygon):
-            polygons = list(geometry.geoms)
-            areas = [p.area for p in polygons]
-            total_area = sum(areas)
-            
-            samples_list = []
-            for poly, area in zip(polygons, areas):
-                n_samples = int(samples_per_prefecture * (area / total_area))
-                if n_samples > 0:
-                    points = sample_points_in_polygon(poly, n_samples, seed=seed+idx)
-                    samples_list.append(points)
-            
-            samples = np.vstack(samples_list) if samples_list else np.empty((0, 2))
-        elif isinstance(geometry, Polygon):
-            samples = sample_points_in_polygon(geometry, samples_per_prefecture, seed=seed+idx)
-        else:
-            continue
-        
-        prefecture_samples = np.column_stack([
-            samples, np.full(len(samples), prefecture_id)
-        ])
-        all_samples.append(prefecture_samples)
-        
-        prefecture_info[int(prefecture_id)] = {
+        pref_id = idx
+
+        train_pts = _sample_from_geometry(geometry, n_train, near_boundary=False,
+                                          buffer_dist=boundary_buffer, seed=seed+idx)
+        val_pts = _sample_from_geometry(geometry, n_val, near_boundary=True,
+                                        buffer_dist=boundary_buffer, seed=seed+idx+1000)
+        test_pts = _sample_from_geometry(geometry, n_test, near_boundary=True,
+                                         buffer_dist=boundary_buffer, seed=seed+idx+2000)
+
+        for pts, collection in [(train_pts, train_samples),
+                                (val_pts, val_samples),
+                                (test_pts, test_samples)]:
+            if len(pts) > 0:
+                collection.append(np.column_stack([pts, np.full(len(pts), pref_id)]))
+
+        prefecture_info[int(pref_id)] = {
             'name': row[name_col] if name_col else f'Prefecture_{idx}',
             'area_sq_deg': float(geometry.area)
         }
-    
-    all_samples = np.vstack(all_samples)
-    df = pd.DataFrame(all_samples, columns=['longitude', 'latitude', 'prefecture_id'])
-    df['prefecture_id'] = df['prefecture_id'].astype(int)
-    df = df.sample(frac=1.0, random_state=seed).reset_index(drop=True)
-    
-    X = df[['longitude', 'latitude']].values
-    y = df['prefecture_id'].values
-    
-    X_temp, X_test, y_temp, y_test = train_test_split(
-        X, y, test_size=test_ratio, random_state=seed, stratify=y
-    )
-    
-    val_size_adjusted = val_ratio / (train_ratio + val_ratio)
-    X_train, X_val, y_train, y_val = train_test_split(
-        X_temp, y_temp, test_size=val_size_adjusted, random_state=seed, stratify=y_temp
-    )
-    
-    # Save splits
-    train_df = pd.DataFrame(X_train, columns=['longitude', 'latitude'])
-    train_df['prefecture_id'] = y_train
-    
-    val_df = pd.DataFrame(X_val, columns=['longitude', 'latitude'])
-    val_df['prefecture_id'] = y_val
-    
-    test_df = pd.DataFrame(X_test, columns=['longitude', 'latitude'])
-    test_df['prefecture_id'] = y_test
-    
+
+    def make_df(samples_list):
+        arr = np.vstack(samples_list)
+        df = pd.DataFrame(arr, columns=['longitude', 'latitude', 'prefecture_id'])
+        df['prefecture_id'] = df['prefecture_id'].astype(int)
+        return df.sample(frac=1.0, random_state=seed).reset_index(drop=True)
+
+    train_df = make_df(train_samples)
+    val_df = make_df(val_samples)
+    test_df = make_df(test_samples)
+
     train_df.to_csv(os.path.join(output_dir, 'train.csv'), index=False)
     val_df.to_csv(os.path.join(output_dir, 'val.csv'), index=False)
     test_df.to_csv(os.path.join(output_dir, 'test.csv'), index=False)
-    
+
     metadata = {
         'n_prefectures': len(gdf),
         'samples_per_prefecture': samples_per_prefecture,
         'train_samples': len(train_df),
         'val_samples': len(val_df),
         'test_samples': len(test_df),
+        'boundary_buffer_deg': boundary_buffer,
         'prefecture_info': prefecture_info,
         'japan_center': [138.0, 36.0],
         'suggested_cap_radius': 10.0
     }
-    
+
     with open(os.path.join(output_dir, 'metadata.json'), 'w') as f:
         json.dump(metadata, f, indent=2)
-    
+
     if verbose:
-        print(f"Dataset generated: {len(df)} total samples")
-    
+        print(f"Dataset: train={len(train_df)}, val={len(val_df)}, test={len(test_df)}")
+        print(f"Test/val points sampled within {boundary_buffer}° of boundaries")
+
     return {'stats': metadata}
 
-
-# =============================================================================
-# Feature Computation (matching California housing approach)
-# =============================================================================
 
 def compute_ylm(l: int, m: int, theta: np.ndarray, phi: np.ndarray) -> np.ndarray:
     """Real spherical harmonics Y_lm(theta, phi) using analytic implementation."""
@@ -684,7 +732,9 @@ def main():
                        default="/projects/arra4944/SlepianEncoder/shapefiles/japan_adm1/JPN_adm1.shp")
     parser.add_argument("--dataset-dir", type=str, default="datasets/japan_prefectures")
     parser.add_argument("--samples-per-prefecture", type=int, default=100)
-    
+    parser.add_argument("--boundary-buffer", type=float, default=0.02,
+                       help="Buffer distance (degrees) for boundary sampling of test/val points")
+
     # Feature configuration
     parser.add_argument("--method", type=str, default="slepian", choices=["slepian", "vanilla_sh"])
     parser.add_argument("--L-global", type=int, default=10)
@@ -728,6 +778,7 @@ def main():
             shapefile_path=args.shapefile,
             output_dir=args.dataset_dir,
             samples_per_prefecture=args.samples_per_prefecture,
+            boundary_buffer=args.boundary_buffer,
             seed=args.seed,
             verbose=True
         )
