@@ -21,7 +21,7 @@ seed = 2001
 with open('paths.json', 'r') as f:
     paths = json.load(f)
 num_ds_dims = 3
-model_path = '/projects/arra4944/SlepianPosEnc/src/hybrid_slepian_sdm/sinr/experiments/sh_l40/model.pt' 
+model_path = '/projects/arra4944/SlepianPosEnc/src/hybrid_slepian_sdm/sinr/experiments/slepian_l30_sh10_res/model.pt' 
 op_file_name = os.path.basename(model_path[:-3]) + '_ica.png'
 
 op_dir = 'visualizations/'

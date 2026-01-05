@@ -16,13 +16,13 @@ DATASET_DIR="$ROOT_DIR/data/japan"
 mkdir -p "$RESULTS_DIR" "$CACHE_DIR" "$FIGURES_DIR" "$DATASET_DIR"
 
 # Training parameters
-ARCHS="mlp resmlp siren glu"
-N_RUNS=3
+ARCHS="mlp"
+N_RUNS=5
 EPOCHS=200
 BATCH_SIZE=256
 PATIENCE=50
 NUM_WORKERS=8
-SAMPLES_PER_PREF="1 2 5 10 50 100"
+SAMPLES_PER_PREF="1,2,5,10,50,100"
 
 # Slepian parameters
 L_GLOBAL=10

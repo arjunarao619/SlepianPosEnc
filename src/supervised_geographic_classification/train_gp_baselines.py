@@ -77,6 +77,11 @@ from pe_baselines.gp import (
     train_rff_classification,
     evaluate_rff_regression,
     evaluate_rff_classification,
+    # Deep RFF (paper-aligned)
+    train_deep_rff_classification,
+    evaluate_deep_rff_classification,
+    train_deep_rff_regression,
+    evaluate_deep_rff_regression,
     # Spherical SVGP
     train_spherical_svgp_regression,
     predict_spherical_svgp,
@@ -87,6 +92,7 @@ from pe_baselines.gp import (
     evaluate_spherical_rff_regression,
     evaluate_spherical_rff_classification,
 )
+import gc
 
 
 def load_california_housing(seed: int = 42):
@@ -331,6 +337,25 @@ def run_experiment(
             )
             metrics = evaluate_rff_regression(model, test_x.to(device), test_y.to(device), y_min, y_max)
 
+        elif method == 'deep_rff':
+            # Deep RFF regression (paper-aligned implementation)
+            model, _ = train_deep_rff_regression(
+                train_x.to(device), train_y.to(device),
+                hidden_dim=args.hidden_dim,
+                bottleneck_dim=args.bottleneck_dim,
+                num_layers=args.num_layers,
+                lengthscale=None,  # Use median heuristic
+                nu=_nu_from_kernel(args.kernel),
+                amplitude=args.amplitude,
+                num_epochs=args.num_epochs,
+                batch_size=args.batch_size,
+                lr=args.lr,
+                device=device,
+                seed=run_seed,
+                verbose=args.verbose
+            )
+            metrics = evaluate_deep_rff_regression(model, test_x, test_y, batch_size=args.batch_size, y_min=y_min, y_max=y_max)
+
         elif method == 'spherical_svgp':
             try:
                 model, likelihood, _ = train_spherical_svgp_regression(
@@ -423,6 +448,26 @@ def run_experiment(
             )
             metrics = evaluate_rff_classification(model, test_x.to(device), test_y.to(device))
 
+        elif method == 'deep_rff':
+            # Deep RFF (paper-aligned implementation)
+            model, _ = train_deep_rff_classification(
+                train_x.to(device), train_y.to(device),
+                num_classes=num_classes,
+                hidden_dim=args.hidden_dim,
+                bottleneck_dim=args.bottleneck_dim,
+                num_layers=args.num_layers,
+                lengthscale=None,  # Use median heuristic
+                nu=_nu_from_kernel(args.kernel),
+                amplitude=args.amplitude,
+                num_epochs=args.num_epochs,
+                batch_size=args.batch_size,
+                lr=args.lr,
+                device=device,
+                seed=run_seed,
+                verbose=args.verbose
+            )
+            metrics = evaluate_deep_rff_classification(model, test_x, test_y, batch_size=args.batch_size)
+
         elif method == 'spherical_rff':
             model, _ = train_spherical_rff_classification(
                 train_coords.to(device), train_y.to(device),
@@ -440,6 +485,12 @@ def run_experiment(
 
     train_time = time.time() - t_start
     metrics['train_time_sec'] = train_time
+
+    # Clear GPU memory to prevent OOM across multiple experiments
+    del model
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    gc.collect()
 
     return metrics
 
@@ -461,7 +512,7 @@ def main():
 
     # Method selection
     parser.add_argument("--method", type=str, required=True,
-                       choices=["exact_gp", "svgp", "planar_rff", "spherical_svgp", "spherical_rff"],
+                       choices=["exact_gp", "svgp", "planar_rff", "deep_rff", "spherical_svgp", "spherical_rff"],
                        help="GP method to use")
 
     # Dataset selection
@@ -486,6 +537,16 @@ def main():
     # RFF configuration
     parser.add_argument("--num-features", type=int, default=1000,
                        help="Number of random features for RFF")
+
+    # Deep RFF configuration (paper-aligned)
+    parser.add_argument("--hidden-dim", type=int, default=1000,
+                       help="Hidden dimension for Deep RFF layers (num random features per layer)")
+    parser.add_argument("--bottleneck-dim", type=int, default=64,
+                       help="Bottleneck dimension for Deep RFF")
+    parser.add_argument("--num-layers", type=int, default=3,
+                       help="Number of stacked RFF layers for Deep RFF")
+    parser.add_argument("--amplitude", type=float, default=1.0,
+                       help="Amplitude parameter for RFF scaling")
 
     # Training configuration
     parser.add_argument("--num-iterations", type=int, default=100,
@@ -575,6 +636,11 @@ def main():
                         result['num_inducing'] = args.num_inducing
                     if args.method in ['planar_rff', 'spherical_rff']:
                         result['num_features'] = args.num_features
+                    if args.method == 'deep_rff':
+                        result['hidden_dim'] = args.hidden_dim
+                        result['bottleneck_dim'] = args.bottleneck_dim
+                        result['num_layers'] = args.num_layers
+                        result['amplitude'] = args.amplitude
 
                     results.append(result)
                     print(f"  [{n_samples}/class] Accuracy={metrics['accuracy']:.4f}")
@@ -597,6 +663,11 @@ def main():
                         result['num_inducing'] = args.num_inducing
                     if args.method in ['planar_rff', 'spherical_rff']:
                         result['num_features'] = args.num_features
+                    if args.method == 'deep_rff':
+                        result['hidden_dim'] = args.hidden_dim
+                        result['bottleneck_dim'] = args.bottleneck_dim
+                        result['num_layers'] = args.num_layers
+                        result['amplitude'] = args.amplitude
                     results.append(result)
 
     else:

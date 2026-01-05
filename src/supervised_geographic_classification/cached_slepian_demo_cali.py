@@ -108,10 +108,10 @@ def compute_slepian_features(
     num_modes: int,
     cap_center: Tuple[float, float] = (-119.5, 37.0),
     verbose: bool = True
-) -> Tuple[np.ndarray, np.ndarray]:
+) -> Tuple[np.ndarray, np.ndarray, float, float]:
     """
     Compute Slepian cap features using PySHTOOLS.
-    
+
     Args:
         coords: [N, 2] array of (lon, lat) in degrees
         L_slepian: Maximum degree for Slepian functions
@@ -119,50 +119,72 @@ def compute_slepian_features(
         num_modes: Number of Slepian modes to compute
         cap_center: (lon, lat) center of cap
         verbose: Print progress info
-    
+
     Returns:
         features: [N, num_modes] array of Slepian features
         eigenvalues: [num_modes] array of eigenvalues
+        basis_time: time for basis construction (from_cap + rotate)
+        eval_time: time for evaluating at all coordinates
     """
     if not HAVE_PYSH:
         raise ImportError("PySHTOOLS required for Slepian features")
-    
+
+    # Cap num_modes at maximum possible: (L+1)^2
+    max_modes = (L_slepian + 1) ** 2
+    if num_modes > max_modes:
+        if verbose:
+            print(f"Warning: num_modes={num_modes} exceeds max={(L_slepian+1)**2} for L={L_slepian}, capping.")
+        num_modes = max_modes
+
     if verbose:
         print(f"Computing Slepian features:")
         print(f"  Cap center: {cap_center}, Radius: {cap_radius_deg}°")
         print(f"  L_slepian={L_slepian}, num_modes={num_modes}")
-    
+
+    # === PHASE 1: Basis construction ===
+    t_basis_start = time.time()
+
     # Create Slepian basis on cap
     slepian = pysh.Slepian.from_cap(
         theta=cap_radius_deg,
         lmax=L_slepian,
         nmax=num_modes
     )
-    
+
     # Rotate to cap center
     slepian.rotate(clat=cap_center[1], clon=cap_center[0], nrot=num_modes)
-    
+
     # Get eigenvalues
     eigenvalues = slepian.eigenvalues[:num_modes].astype(np.float32)
-    
+
+    basis_time = time.time() - t_basis_start
+
     if verbose:
         print(f"  Eigenvalues: min={eigenvalues.min():.4f}, max={eigenvalues.max():.4f}")
         print(f"  #λ>0.5: {(eigenvalues > 0.5).sum()}")
-    
-    # Evaluate Slepian functions at coordinates
+        print(f"  Basis construction time: {basis_time:.2f}s")
+
+    # === PHASE 2: Evaluate at coordinates ===
+    t_eval_start = time.time()
+
     lon = coords[:, 0]
     lat = coords[:, 1]
     lon_360 = np.where(lon < 0.0, lon + 360.0, lon)
-    
+
     features = []
     for i in range(num_modes):
         coeffs = slepian.to_shcoeffs(i)
         vals = coeffs.expand(lon=lon_360, lat=lat, degrees=True)
         features.append(vals)
-    
+
     features = np.column_stack(features).astype(np.float32)
-    
-    return features, eigenvalues
+
+    eval_time = time.time() - t_eval_start
+
+    if verbose:
+        print(f"  Evaluation time: {eval_time:.2f}s")
+
+    return features, eigenvalues, basis_time, eval_time
 
 
 def compute_and_cache_features(
@@ -193,22 +215,22 @@ def compute_and_cache_features(
     # Compute Slepian features
     if verbose:
         print(f"Computing Slepian features...")
-    slepian_features, eigenvalues = compute_slepian_features(
+    slepian_features, eigenvalues, slepian_basis_time, slepian_eval_time = compute_slepian_features(
         coords, L_slepian, cap_radius_deg, num_modes,
         verbose=verbose
     )
-    
+
     # Trim Slepian features by eigenvalue threshold
     keep_mask = eigenvalues > lambda_thresh
     kept_modes = keep_mask.sum()
     slepian_trimmed = slepian_features[:, keep_mask]
-    
+
     if verbose:
         print(f"Eigenvalue trimming: λ>{lambda_thresh} → kept {kept_modes}/{num_modes} modes")
-    
+
     # Combine features
     features = np.hstack([global_features, slepian_trimmed])
-    
+
     # Create metadata
     metadata = {
         'L_global': L_global,
@@ -221,7 +243,9 @@ def compute_and_cache_features(
         'slepian_dim': int(kept_modes),
         'total_dim': int(features.shape[1]),
         'n_samples': int(features.shape[0]),
-        'eigenvalues_kept': eigenvalues[keep_mask].tolist()
+        'eigenvalues_kept': eigenvalues[keep_mask].tolist(),
+        'slepian_basis_time_sec': slepian_basis_time,
+        'slepian_eval_time_sec': slepian_eval_time,
     }
     
     # Cache if requested
@@ -698,7 +722,9 @@ def main():
                 'mae_dollars': metrics['mae_dollars'],
                 'train_loss': train_losses[-1] if train_losses else 0,
                 'val_loss': val_losses[-1] if val_losses else 0,
-                'train_time_sec': train_time
+                'slepian_basis_time_sec': metadata.get('slepian_basis_time_sec', 0),
+                'slepian_eval_time_sec': metadata.get('slepian_eval_time_sec', 0),
+                'train_time_sec': train_time,
             })
     
     # Save CSV results

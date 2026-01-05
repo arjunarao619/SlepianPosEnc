@@ -193,20 +193,27 @@ def compute_slepian_raster(
         print(f"Caps: {[c['name'] for c in caps]}")
         print(f"Eigenvalue threshold: λ > {lambda_thresh}")
 
-    # Step 1: Compute global SH features
-    if verbose:
-        print(f"\n[1/3] Computing global SH features (L={L_global})...")
+    # Step 1: Compute global SH features (skip if L_global=0 for slepian-only mode)
+    if L_global > 0:
+        if verbose:
+            print(f"\n[1/3] Computing global SH features (L={L_global})...")
 
-    # Normalize coordinates for encode_loc_sh: lon/180, lat/90 -> [-1, 1]
-    lon_norm = torch.tensor(lon_flat / 180.0, dtype=torch.float32)
-    lat_norm = torch.tensor(lat_flat / 90.0, dtype=torch.float32)
-    coords_norm = torch.stack([lon_norm, lat_norm], dim=1)
+        # Normalize coordinates for encode_loc_sh: lon/180, lat/90 -> [-1, 1]
+        lon_norm = torch.tensor(lon_flat / 180.0, dtype=torch.float32)
+        lat_norm = torch.tensor(lat_flat / 90.0, dtype=torch.float32)
+        coords_norm = torch.stack([lon_norm, lat_norm], dim=1)
 
-    global_features = encode_loc_sh(coords_norm, L=L_global).numpy()
-    global_dim = global_features.shape[1]
+        global_features = encode_loc_sh(coords_norm, L=L_global).numpy()
+        global_dim = global_features.shape[1]
 
-    if verbose:
-        print(f"  Global SH shape: {global_features.shape}")
+        if verbose:
+            print(f"  Global SH shape: {global_features.shape}")
+    else:
+        # Slepian-only mode: no global SH
+        if verbose:
+            print(f"\n[1/3] Skipping global SH (L_global=0, slepian-only mode)")
+        global_features = None
+        global_dim = 0
 
     # Step 2: Compute Slepian features for each cap
     regional_features_list = []
@@ -286,7 +293,10 @@ def compute_slepian_raster(
     if verbose:
         print(f"\n[3/3] Combining features...")
 
-    all_features = [global_features] + regional_features_list
+    if global_features is not None:
+        all_features = [global_features] + regional_features_list
+    else:
+        all_features = regional_features_list  # Slepian-only mode
     combined_features = np.hstack(all_features).astype(np.float32)
 
     # Normalize features to zero mean, unit variance
@@ -590,8 +600,11 @@ def encode_loc_slepian_direct(loc_ip, slepian_data: Dict, device=None):
 
     N = len(lon)
 
-    # Step 1: Compute global SH features (L_global is small, analytically stable)
-    global_feats = encode_loc_sh(loc_ip, L=L_global)  # (N, L_global^2)
+    # Step 1: Compute global SH features (skip if L_global=0 for slepian-only mode)
+    if L_global > 0:
+        global_feats = encode_loc_sh(loc_ip, L=L_global)  # (N, L_global^2)
+    else:
+        global_feats = None  # Slepian-only mode
 
     # Step 2: Evaluate each Slepian mode at query locations using pyshtools
     regional_feats_list = []
@@ -613,9 +626,12 @@ def encode_loc_slepian_direct(loc_ip, slepian_data: Dict, device=None):
     # Concatenate all features
     if regional_feats_list:
         regional_feats = torch.cat(regional_feats_list, dim=1)
-        all_feats = torch.cat([global_feats, regional_feats], dim=1)
+        if global_feats is not None:
+            all_feats = torch.cat([global_feats, regional_feats], dim=1)
+        else:
+            all_feats = regional_feats  # Slepian-only mode
     else:
-        all_feats = global_feats
+        all_feats = global_feats if global_feats is not None else torch.zeros((N, 0), device=device)
 
     return all_feats
 

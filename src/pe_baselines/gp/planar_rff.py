@@ -415,16 +415,559 @@ def evaluate_rff_regression(
 def evaluate_rff_classification(
     model: RFFClassification,
     test_x: torch.Tensor,
-    test_y: torch.Tensor
+    test_y: torch.Tensor,
+    batch_size: int = 512
 ) -> Dict[str, float]:
-    """Evaluate RFF classification. Returns dict with accuracy."""
-    # Ensure test data is on same device as model
+    """Evaluate RFF classification with batched inference. Returns dict with accuracy."""
     device = model.rff.omega.device
-    test_x = test_x.to(device)
-    test_y = test_y.to(device)
+    model.eval()
 
-    predictions = model.predict(test_x)
-    pred_classes = predictions['predictions']
-    accuracy = (pred_classes == test_y).float().mean().item()
+    all_preds = []
+    n = len(test_x)
+
+    with torch.no_grad():
+        for i in range(0, n, batch_size):
+            batch_x = test_x[i:i + batch_size].to(device)
+            preds = model(batch_x).argmax(dim=1)
+            all_preds.append(preds.cpu())
+            del batch_x
+
+    predictions = torch.cat(all_preds)
+    accuracy = (predictions == test_y.cpu()).float().mean().item()
+
+    # Clean up GPU memory
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
     return {'accuracy': accuracy}
+
+
+# =============================================================================
+# Deep RFF Implementation (aligned with DeepRandomFeatures paper)
+# =============================================================================
+
+class DeepRFFLayer(nn.Module):
+    """
+    Deep RFF layer matching the DeepRandomFeatures paper (arxiv 2412.11350).
+
+    Key differences from PlanarRFF:
+    - Lengthscale is baked into the spectral sampling (StudentT scale parameter)
+    - Amplitude is included in the scaling factor
+    - Includes a learnable output layer with weights initialized from N(0,1)
+
+    Architecture: input -> frozen_linear -> cos -> scale -> learnable_linear -> output
+    """
+
+    def __init__(
+        self,
+        input_dim: int,
+        hidden_dim: int,
+        output_dim: int,
+        lengthscale: float = 1.0,
+        nu: float = 2.5,
+        amplitude: float = 1.0,
+        seed: int = 42
+    ):
+        super().__init__()
+        self.input_dim = input_dim
+        self.hidden_dim = hidden_dim
+        self.output_dim = output_dim
+        self.lengthscale = lengthscale
+        self.nu = nu
+        self.amplitude = amplitude
+
+        # Initialize layers
+        self.hidden_layer = nn.Linear(input_dim, hidden_dim, bias=True)
+        self.output_layer = nn.Linear(hidden_dim, output_dim, bias=True)
+
+        # Sample weights from spectral density (matching paper's approach)
+        torch.manual_seed(seed)
+
+        # StudentT(df=2*nu, scale=1/lengthscale) - paper's approach
+        # This bakes lengthscale directly into the weight sampling
+        student_t = torch.distributions.StudentT(df=2 * nu, scale=1.0 / lengthscale)
+        self.hidden_layer.weight.data = student_t.sample((hidden_dim, input_dim))
+
+        # Bias: Uniform(0, 2*pi)
+        self.hidden_layer.bias.data.uniform_(0, 2 * np.pi)
+
+        # Output layer: N(0, 1) initialization (learnable)
+        self.output_layer.weight.data.normal_(0, 1)
+        self.output_layer.bias.data.zero_()
+
+        # Freeze hidden layer weights (RFF weights should not be trained)
+        self.hidden_layer.weight.requires_grad = False
+        self.hidden_layer.bias.requires_grad = False
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Forward pass matching paper's implementation."""
+        # Project through frozen RFF layer
+        x = self.hidden_layer(x)
+
+        # Apply cosine with amplitude scaling (paper's formula)
+        # scaling = sqrt(2 * amplitude^2 / hidden_dim)
+        scaling = torch.sqrt(torch.tensor(
+            2.0 * self.amplitude ** 2 / self.hidden_dim,
+            device=x.device, dtype=x.dtype
+        ))
+        x = scaling * torch.cos(x)
+
+        # Learnable output projection
+        x = self.output_layer(x)
+        return x
+
+
+class DeepRFFClassifier(nn.Module):
+    """
+    Deep RFF classifier with stacked layers and skip connections.
+
+    Matches the DeepSpatiotemporalGPNN architecture from the paper, adapted for classification.
+
+    Architecture:
+    - Layer 0: input_dim -> hidden_dim -> bottleneck_dim
+    - Layer 1+: (bottleneck_dim + input_dim) -> hidden_dim -> bottleneck_dim
+    - Skip connections: concatenate layer output with original input
+    - Final: bottleneck_dim -> num_classes
+    """
+
+    def __init__(
+        self,
+        input_dim: int,
+        hidden_dim: int,
+        bottleneck_dim: int,
+        num_classes: int,
+        num_layers: int = 3,
+        lengthscale: float = 1.0,
+        nu: float = 2.5,
+        amplitude: float = 1.0,
+        seed: int = 42
+    ):
+        super().__init__()
+        self.input_dim = input_dim
+        self.hidden_dim = hidden_dim
+        self.bottleneck_dim = bottleneck_dim
+        self.num_classes = num_classes
+        self.num_layers = num_layers
+
+        # Build stacked RFF layers
+        self.layers = nn.ModuleList()
+
+        for i in range(num_layers):
+            if i == 0:
+                # First layer: input_dim -> bottleneck_dim
+                layer_input_dim = input_dim
+            else:
+                # Subsequent layers: (bottleneck_dim + input_dim) -> bottleneck_dim
+                # Due to skip connections
+                layer_input_dim = bottleneck_dim + input_dim
+
+            layer = DeepRFFLayer(
+                input_dim=layer_input_dim,
+                hidden_dim=hidden_dim,
+                output_dim=bottleneck_dim,
+                lengthscale=lengthscale,
+                nu=nu,
+                amplitude=amplitude,
+                seed=seed + i  # Different seed per layer
+            )
+            self.layers.append(layer)
+
+        # Final classifier
+        self.classifier = nn.Linear(bottleneck_dim, num_classes)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Forward pass with skip connections."""
+        original_input = x
+
+        for i, layer in enumerate(self.layers):
+            x = layer(x)
+            # Add skip connection (except for last layer)
+            if i < len(self.layers) - 1:
+                x = torch.cat([x, original_input], dim=1)
+
+        # Classification head
+        logits = self.classifier(x)
+        return logits
+
+
+def train_deep_rff_classification(
+    train_x: torch.Tensor,
+    train_y: torch.Tensor,
+    num_classes: int,
+    hidden_dim: int = 1000,
+    bottleneck_dim: int = 64,
+    num_layers: int = 3,
+    lengthscale: Optional[float] = None,
+    nu: float = 2.5,
+    amplitude: float = 1.0,
+    num_epochs: int = 100,
+    batch_size: int = 1024,
+    lr: float = 0.001,
+    weight_decay: float = 0.01,
+    device: Optional[torch.device] = None,
+    seed: int = 42,
+    verbose: bool = True
+) -> Tuple[DeepRFFClassifier, Dict]:
+    """
+    Train Deep RFF classifier matching the DeepRandomFeatures paper.
+
+    Returns (model, metadata).
+    """
+    from torch.utils.data import DataLoader, TensorDataset
+
+    if device is None:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    train_x = train_x.to(device)
+    train_y = train_y.to(device)
+
+    # Estimate lengthscale if not provided (median heuristic)
+    if lengthscale is None:
+        with torch.no_grad():
+            sample_size = min(1000, len(train_x))
+            dists = torch.cdist(train_x[:sample_size], train_x[:sample_size])
+            triu_mask = torch.triu(torch.ones_like(dists), diagonal=1).bool()
+            lengthscale = torch.median(dists[triu_mask]).item()
+        if verbose:
+            print(f"Using median heuristic lengthscale: {lengthscale:.4f}")
+
+    # Create model
+    model = DeepRFFClassifier(
+        input_dim=train_x.shape[1],
+        hidden_dim=hidden_dim,
+        bottleneck_dim=bottleneck_dim,
+        num_classes=num_classes,
+        num_layers=num_layers,
+        lengthscale=lengthscale,
+        nu=nu,
+        amplitude=amplitude,
+        seed=seed
+    ).to(device)
+
+    if verbose:
+        total_params = sum(p.numel() for p in model.parameters())
+        trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        print(f"Model parameters: {total_params:,} total, {trainable_params:,} trainable")
+
+    # Create data loader
+    dataset = TensorDataset(train_x, train_y.long())
+    loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+
+    # Optimizer (only trainable parameters)
+    optimizer = torch.optim.Adam(
+        filter(lambda p: p.requires_grad, model.parameters()),
+        lr=lr,
+        weight_decay=weight_decay
+    )
+    criterion = nn.CrossEntropyLoss()
+
+    # Training loop
+    model.train()
+    losses = []
+
+    for epoch in range(num_epochs):
+        epoch_loss = 0.0
+        n_batches = 0
+
+        for batch_x, batch_y in loader:
+            optimizer.zero_grad()
+            logits = model(batch_x)
+            loss = criterion(logits, batch_y)
+            loss.backward()
+            optimizer.step()
+
+            epoch_loss += loss.item()
+            n_batches += 1
+
+        avg_loss = epoch_loss / n_batches
+        losses.append(avg_loss)
+
+        if verbose and (epoch + 1) % 20 == 0:
+            print(f"Epoch {epoch+1}/{num_epochs}, Loss: {avg_loss:.4f}")
+
+    metadata = {
+        'hidden_dim': hidden_dim,
+        'bottleneck_dim': bottleneck_dim,
+        'num_layers': num_layers,
+        'lengthscale': lengthscale,
+        'nu': nu,
+        'amplitude': amplitude,
+        'final_loss': losses[-1] if losses else None
+    }
+
+    return model, metadata
+
+
+@torch.no_grad()
+def evaluate_deep_rff_classification(
+    model: DeepRFFClassifier,
+    test_x: torch.Tensor,
+    test_y: torch.Tensor,
+    batch_size: int = 512
+) -> Dict[str, float]:
+    """
+    Evaluate Deep RFF classifier with batched inference and memory cleanup.
+
+    Returns dict with accuracy.
+    """
+    device = next(model.parameters()).device
+    model.eval()
+
+    all_preds = []
+    n = len(test_x)
+
+    for i in range(0, n, batch_size):
+        batch_x = test_x[i:i + batch_size].to(device)
+        preds = model(batch_x).argmax(dim=1)
+        all_preds.append(preds.cpu())
+        del batch_x
+
+    predictions = torch.cat(all_preds)
+    accuracy = (predictions == test_y.cpu()).float().mean().item()
+
+    # Clean up GPU memory
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+    return {'accuracy': accuracy}
+
+
+class DeepRFFRegressor(nn.Module):
+    """
+    Deep RFF regressor with stacked layers and skip connections.
+
+    Matches the DeepSpatiotemporalGPNN architecture from the paper, adapted for regression.
+
+    Architecture:
+    - Layer 0: input_dim -> hidden_dim -> bottleneck_dim
+    - Layer 1+: (bottleneck_dim + input_dim) -> hidden_dim -> bottleneck_dim
+    - Skip connections: concatenate layer output with original input
+    - Final: bottleneck_dim -> 1 (regression output)
+    """
+
+    def __init__(
+        self,
+        input_dim: int,
+        hidden_dim: int,
+        bottleneck_dim: int,
+        num_layers: int = 3,
+        lengthscale: float = 1.0,
+        nu: float = 2.5,
+        amplitude: float = 1.0,
+        seed: int = 42
+    ):
+        super().__init__()
+        self.input_dim = input_dim
+        self.hidden_dim = hidden_dim
+        self.bottleneck_dim = bottleneck_dim
+        self.num_layers = num_layers
+
+        # Build stacked RFF layers
+        self.layers = nn.ModuleList()
+
+        for i in range(num_layers):
+            if i == 0:
+                # First layer: input_dim -> bottleneck_dim
+                layer_input_dim = input_dim
+            else:
+                # Subsequent layers: (bottleneck_dim + input_dim) -> bottleneck_dim
+                # Due to skip connections
+                layer_input_dim = bottleneck_dim + input_dim
+
+            layer = DeepRFFLayer(
+                input_dim=layer_input_dim,
+                hidden_dim=hidden_dim,
+                output_dim=bottleneck_dim,
+                lengthscale=lengthscale,
+                nu=nu,
+                amplitude=amplitude,
+                seed=seed + i  # Different seed per layer
+            )
+            self.layers.append(layer)
+
+        # Final regression head (single output)
+        self.regressor = nn.Linear(bottleneck_dim, 1)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Forward pass with skip connections. Returns [N, 1] predictions."""
+        original_input = x
+
+        for i, layer in enumerate(self.layers):
+            x = layer(x)
+            # Add skip connection (except for last layer)
+            if i < len(self.layers) - 1:
+                x = torch.cat([x, original_input], dim=1)
+
+        # Regression head
+        output = self.regressor(x)
+        return output
+
+
+def train_deep_rff_regression(
+    train_x: torch.Tensor,
+    train_y: torch.Tensor,
+    hidden_dim: int = 1000,
+    bottleneck_dim: int = 64,
+    num_layers: int = 3,
+    lengthscale: Optional[float] = None,
+    nu: float = 2.5,
+    amplitude: float = 1.0,
+    num_epochs: int = 100,
+    batch_size: int = 1024,
+    lr: float = 0.001,
+    weight_decay: float = 0.01,
+    device: Optional[torch.device] = None,
+    seed: int = 42,
+    verbose: bool = True
+) -> Tuple[DeepRFFRegressor, Dict]:
+    """
+    Train Deep RFF regressor matching the DeepRandomFeatures paper.
+
+    Returns (model, metadata).
+    """
+    from torch.utils.data import DataLoader, TensorDataset
+
+    if device is None:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    train_x = train_x.to(device)
+    train_y = train_y.to(device)
+
+    # Ensure train_y is the right shape
+    if train_y.dim() == 1:
+        train_y = train_y.unsqueeze(1)
+
+    # Estimate lengthscale if not provided (median heuristic)
+    if lengthscale is None:
+        with torch.no_grad():
+            sample_size = min(1000, len(train_x))
+            dists = torch.cdist(train_x[:sample_size], train_x[:sample_size])
+            triu_mask = torch.triu(torch.ones_like(dists), diagonal=1).bool()
+            lengthscale = torch.median(dists[triu_mask]).item()
+        if verbose:
+            print(f"Using median heuristic lengthscale: {lengthscale:.4f}")
+
+    # Create model
+    model = DeepRFFRegressor(
+        input_dim=train_x.shape[1],
+        hidden_dim=hidden_dim,
+        bottleneck_dim=bottleneck_dim,
+        num_layers=num_layers,
+        lengthscale=lengthscale,
+        nu=nu,
+        amplitude=amplitude,
+        seed=seed
+    ).to(device)
+
+    if verbose:
+        total_params = sum(p.numel() for p in model.parameters())
+        trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        print(f"Model parameters: {total_params:,} total, {trainable_params:,} trainable")
+
+    # Create data loader
+    dataset = TensorDataset(train_x, train_y)
+    loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+
+    # Optimizer (only trainable parameters)
+    optimizer = torch.optim.Adam(
+        filter(lambda p: p.requires_grad, model.parameters()),
+        lr=lr,
+        weight_decay=weight_decay
+    )
+    criterion = nn.MSELoss()
+
+    # Training loop
+    model.train()
+    losses = []
+
+    for epoch in range(num_epochs):
+        epoch_loss = 0.0
+        n_batches = 0
+
+        for batch_x, batch_y in loader:
+            optimizer.zero_grad()
+            preds = model(batch_x)
+            loss = criterion(preds, batch_y)
+            loss.backward()
+            optimizer.step()
+
+            epoch_loss += loss.item()
+            n_batches += 1
+
+        avg_loss = epoch_loss / n_batches
+        losses.append(avg_loss)
+
+        if verbose and (epoch + 1) % 20 == 0:
+            print(f"Epoch {epoch+1}/{num_epochs}, MSE Loss: {avg_loss:.6f}")
+
+    metadata = {
+        'hidden_dim': hidden_dim,
+        'bottleneck_dim': bottleneck_dim,
+        'num_layers': num_layers,
+        'lengthscale': lengthscale,
+        'nu': nu,
+        'amplitude': amplitude,
+        'final_loss': losses[-1] if losses else None
+    }
+
+    return model, metadata
+
+
+@torch.no_grad()
+def evaluate_deep_rff_regression(
+    model: DeepRFFRegressor,
+    test_x: torch.Tensor,
+    test_y: torch.Tensor,
+    batch_size: int = 512,
+    y_min: Optional[float] = None,
+    y_max: Optional[float] = None
+) -> Dict[str, float]:
+    """
+    Evaluate Deep RFF regressor with batched inference and memory cleanup.
+
+    Returns dict with mse, mae, r2 (and mae_original if y_min/y_max provided).
+    """
+    device = next(model.parameters()).device
+    model.eval()
+
+    all_preds = []
+    n = len(test_x)
+
+    for i in range(0, n, batch_size):
+        batch_x = test_x[i:i + batch_size].to(device)
+        preds = model(batch_x).squeeze()
+        all_preds.append(preds.cpu())
+        del batch_x
+
+    predictions = torch.cat(all_preds)
+    targets = test_y.cpu()
+
+    # Ensure same shape
+    if targets.dim() > 1:
+        targets = targets.squeeze()
+
+    # Compute metrics
+    mse = ((predictions - targets) ** 2).mean().item()
+    mae = (predictions - targets).abs().mean().item()
+
+    ss_res = ((targets - predictions) ** 2).sum()
+    ss_tot = ((targets - targets.mean()) ** 2).sum()
+    r2 = (1 - (ss_res / ss_tot)).item()
+
+    result = {
+        'mse': mse,
+        'mae': mae,
+        'r2': r2
+    }
+
+    # Compute MAE in original scale if normalization params provided
+    if y_min is not None and y_max is not None:
+        pred_orig = predictions * (y_max - y_min) + y_min
+        targets_orig = targets * (y_max - y_min) + y_min
+        result['mae_original'] = (pred_orig - targets_orig).abs().mean().item()
+
+    # Clean up GPU memory
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+    return result

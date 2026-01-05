@@ -7,7 +7,7 @@ import eval
 
 train_params = {}
 
-train_params['experiment_name'] = 'slepian_l10_sh10' # This will be the name of the directory where results for this run are saved.
+train_params['experiment_name'] = 'slepian_l40_sh10_res' # This will be the name of the directory where results for this run are saved.
 train_params['log_frequency'] = 100
 '''
 species_set
@@ -36,8 +36,8 @@ input_enc
 - Valid values: 'sin_cos', 'env', 'sin_cos_env', 'sh'
 '''
 train_params['input_enc'] = 'slepian'  # Change to 'sh' for spherical harmonics
-train_params['slepian_L_regional'] = 10
-train_params['model'] = 'LinNet'
+train_params['slepian_L_regional'] = 40
+train_params['model'] = 'ResidualFCNet'
 '''
 sh_L
 - Maximum degree for spherical harmonics encoding (only used when input_enc='sh')
