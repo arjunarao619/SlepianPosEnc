@@ -24,15 +24,14 @@ FIGURES_DIR="$RESULTS_DIR/figures"
 mkdir -p "$RESULTS_DIR" "$CACHE_DIR" "$FIGURES_DIR"
 
 # Training parameters
-# ARCHS="mlp resmlp siren glu"
-ARCHS="mlp"
+ARCHS="linear mlp resmlp siren glu"
 
 N_RUNS=2
 EPOCHS=200
 BATCH_SIZE=2048
 PATIENCE=30
 NUM_WORKERS=16
-LABEL_FRACS="0.01,0.05,0.10,0.25,0.50,1.0"
+LABEL_FRACS="1.0"
 
 # Slepian parameters
 L_GLOBAL=10
@@ -44,7 +43,7 @@ echo "======================================"
 
 # Slepian experiments
 for ARCH in $ARCHS; do
-    for L in 10 20 30 40 50 60 70 80 90 100 110 120; do
+    for L in 40 80 120; do
         NUM_MODES=$(python -c "
 import numpy as np
 theta_rad = $CAP_RADIUS * np.pi / 180.0
@@ -69,7 +68,7 @@ done
 
 # Vanilla SH experiments
 for ARCH in $ARCHS; do
-    for L in 10 15 20 25 30 35 40 45 50 55 60; do
+    for L in 10 40; do
         echo "-> Vanilla SH L=$L, arch=$ARCH"
         python "$PARENT_DIR/train_mss_sh_vanilla.py" \
             --data-path "$DATA_PATH" \

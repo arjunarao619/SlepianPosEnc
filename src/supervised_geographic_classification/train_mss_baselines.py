@@ -15,6 +15,7 @@ import os
 import sys
 import time
 import json
+import copy
 import argparse
 from pathlib import Path
 from typing import Dict, Tuple, List
@@ -515,8 +516,16 @@ def main():
 
     # Architecture selection
     parser.add_argument("--arch", type=str, default="mlp",
-                       choices=["mlp", "resmlp", "siren", "glu"],
+                       choices=["linear", "mlp", "resmlp", "siren", "glu"],
                        help="Neural network architecture (default: mlp)")
+
+    # Resolution sweep parameters
+    parser.add_argument("--max-radius", type=float, default=None,
+                        help="Max radius for frequency encoders. "
+                             "If set, overrides BASELINE_CONFIGS for grid/sphere* encoders.")
+    parser.add_argument("--min-radius", type=float, default=None,
+                        help="Min radius for frequency encoders. "
+                             "If set, overrides BASELINE_CONFIGS for grid/sphere* encoders.")
 
     args = parser.parse_args()
 
@@ -527,9 +536,32 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
+    # Create modifiable copy of baseline configs
+    baseline_configs = copy.deepcopy(BASELINE_CONFIGS)
+
+    # Override resolution if specified (for frequency-based encoders)
+    if args.max_radius is not None or args.min_radius is not None:
+        # Use provided values or defaults
+        max_r = args.max_radius if args.max_radius is not None else 360.0
+        min_r = args.min_radius if args.min_radius is not None else 1.0
+
+        # Compute frequency_num from radius ratio (log scale)
+        import math
+        freq_num = max(4, int(math.log2(max_r / min_r) * 4))
+
+        print(f"Resolution override: max_radius={max_r}, min_radius={min_r}, frequency_num={freq_num}")
+
+        # Update frequency-based encoders
+        freq_encoders = ['grid', 'spherec', 'spherecplus', 'spherem', 'spheremplus', 'theory']
+        for enc_name in freq_encoders:
+            if enc_name in baseline_configs:
+                baseline_configs[enc_name]['params']['max_radius'] = max_r
+                baseline_configs[enc_name]['params']['min_radius'] = min_r
+                baseline_configs[enc_name]['params']['frequency_num'] = freq_num
+
     # Select encoders
     if args.encoders == "all":
-        encoder_names = list(BASELINE_CONFIGS.keys())
+        encoder_names = list(baseline_configs.keys())
     else:
         encoder_names = [e.strip() for e in args.encoders.split(',')]
 
@@ -612,7 +644,7 @@ def main():
     print(f"{'='*70}")
 
     for encoder_name in encoder_names:
-        config = BASELINE_CONFIGS[encoder_name]
+        config = baseline_configs[encoder_name]
 
         print(f"\n{'='*60}")
         print(f"Encoder: {encoder_name.upper()}")
@@ -684,7 +716,7 @@ def main():
                     )
 
                 # Record results
-                csv_results.append({
+                result_row = {
                     'method': encoder_name,  # For compatibility with combined CSV
                     'encoder': encoder_name,
                     'arch': args.arch,
@@ -703,7 +735,14 @@ def main():
                     'train_loss': train_losses[-1] if train_losses else 0,
                     'val_loss': val_losses[-1] if val_losses else 0,
                     'train_time_sec': train_time
-                })
+                }
+
+                # Add resolution info if applicable
+                if 'max_radius' in config['params']:
+                    result_row['max_radius'] = config['params']['max_radius']
+                    result_row['min_radius'] = config['params']['min_radius']
+
+                csv_results.append(result_row)
 
     # Save CSV results
     df_results = pd.DataFrame(csv_results)

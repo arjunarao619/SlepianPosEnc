@@ -8,8 +8,8 @@ PARENT_DIR="$(dirname "$SCRIPT_DIR")"
 SRC_DIR="$(dirname "$PARENT_DIR")"
 ROOT_DIR="$(dirname "$SRC_DIR")"
 
-# Data path (must be set by user)
-DATA_PATH="${MSS_DATA_PATH:-/path/to/mss/data}"
+# Data path
+DATA_PATH="${MSS_DATA_PATH:-/scratch/local/arra4944_images/drf/Experiment_data/Experiment_data}"
 
 if [ ! -d "$DATA_PATH" ]; then
     echo "Error: MSS data not found at $DATA_PATH"
@@ -23,16 +23,16 @@ FIGURES_DIR="$RESULTS_DIR/figures"
 mkdir -p "$RESULTS_DIR" "$FIGURES_DIR"
 
 # Training parameters
-ARCHS="mlp resmlp siren glu"
+ARCHS="linear mlp resmlp siren glu"
 N_RUNS=5
 EPOCHS=200
 BATCH_SIZE=2048
 PATIENCE=30
 NUM_WORKERS=16
-LABEL_FRACS="0.01 0.05 0.10 0.25 0.50 1.0"
+LABEL_FRACS="1.0"
 
 # Baseline encoders
-ENCODERS="direct,cartesian3d,wrap,grid,spherec,spherecplus,spherem,spheremplus,theory"
+ENCODERS="direct,cartesian3d,wrap"
 
 echo "Arctic MSS Baseline Experiments"
 echo "================================"

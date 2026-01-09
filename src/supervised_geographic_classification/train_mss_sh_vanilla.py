@@ -623,7 +623,7 @@ def main():
 
     # Architecture selection
     parser.add_argument("--arch", type=str, default="mlp",
-                       choices=["mlp", "resmlp", "siren", "glu"],
+                       choices=["linear", "mlp", "resmlp", "siren", "glu"],
                        help="Neural network architecture (default: mlp)")
 
     args = parser.parse_args()
