@@ -33,7 +33,7 @@ echo "California Housing Experiments"
 echo "=============================="
 
 for ARCH in $ARCHS; do
-    for L in 10 20 30 40 50 60 70 80 90 100 110 120; do
+    for L in 500; do
     # for L in 10; do
 
         echo "-> Slepian L=$L, arch=$ARCH"

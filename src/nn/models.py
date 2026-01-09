@@ -206,6 +206,36 @@ class LocationMLPClassifier(nn.Module):
 
 
 # =========================
+# Simple Linear heads
+# =========================
+
+class LinearRegressor(nn.Module):
+    """Simple linear regressor on top of a location encoder (no hidden layers)."""
+    def __init__(self, encoder: nn.Module):
+        super().__init__()
+        self.encoder = encoder
+        in_dim = encoder.n_features
+        self.linear = nn.Linear(in_dim, 1)
+
+    def forward(self, coords: torch.Tensor) -> torch.Tensor:
+        feats = self.encoder(coords)
+        return self.linear(feats).squeeze(-1)
+
+
+class LinearClassifier(nn.Module):
+    """Simple linear classifier on top of a location encoder (no hidden layers)."""
+    def __init__(self, encoder: nn.Module, num_classes: int):
+        super().__init__()
+        self.encoder = encoder
+        in_dim = encoder.n_features
+        self.linear = nn.Linear(in_dim, num_classes)
+
+    def forward(self, coords: torch.Tensor) -> torch.Tensor:
+        feats = self.encoder(coords)
+        return self.linear(feats)
+
+
+# =========================
 # Residual SIREN heads
 # =========================
 
@@ -1032,8 +1062,19 @@ def build_location_model(
     task = task.lower()
     arch = arch.lower()
 
+    # === Linear (no hidden layers) ===
+    if arch == "linear":
+        if task == "regression":
+            return LinearRegressor(encoder=encoder)
+        elif task == "classification":
+            if num_classes is None:
+                raise ValueError("num_classes must be provided for classification.")
+            return LinearClassifier(encoder=encoder, num_classes=num_classes)
+        else:
+            raise ValueError(f"Unknown task: {task}")
+
     # === MLP ===
-    if arch == "mlp":
+    elif arch == "mlp":
         if mlp_config is not None:
             _hidden_dim = mlp_config.hidden_dim
             _dropout = mlp_config.dropout
@@ -1207,7 +1248,7 @@ def build_location_model(
             raise ValueError(f"Unknown task: {task}")
 
     else:
-        raise ValueError(f"Unknown architecture: {arch}. Choose from: mlp, resiren, resmlp, siren, glu")
+        raise ValueError(f"Unknown architecture: {arch}. Choose from: linear, mlp, resiren, resmlp, siren, glu")
 
 
 def build_indexed_location_model(
@@ -1409,4 +1450,4 @@ def build_indexed_location_model(
             raise ValueError(f"Unknown task: {task}")
 
     else:
-        raise ValueError(f"Unknown architecture: {arch}. Choose from: mlp, resiren, resmlp, siren, glu")
+        raise ValueError(f"Unknown architecture: {arch}. Choose from: linear, mlp, resiren, resmlp, siren, glu")

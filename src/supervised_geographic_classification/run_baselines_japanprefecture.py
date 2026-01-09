@@ -23,6 +23,7 @@ import argparse
 import json
 import time
 import math
+import copy
 from pathlib import Path
 from typing import Dict, Tuple, Optional, List
 import warnings
@@ -197,9 +198,15 @@ def generate_japan_prefecture_dataset(
 # Baseline Configurations
 # =============================================================================
 
-def get_baseline_encoder(name: str, params: Dict = None):
-    """Create a baseline encoder with specified parameters."""
-    
+def get_baseline_encoder(name: str, params: Dict = None, resolution_override: Dict = None):
+    """Create a baseline encoder with specified parameters.
+
+    Args:
+        name: Encoder name
+        params: Full parameter dict (takes precedence if provided)
+        resolution_override: Resolution params to override defaults for freq-based encoders
+    """
+
     # Default parameters for Japan (centered around 138°E, 36°N)
     default_params = {
         'grid': {
@@ -221,7 +228,12 @@ def get_baseline_encoder(name: str, params: Dict = None):
             'freq_init': 'geometric'
         }
     }
-    
+
+    # Apply resolution override to defaults if specified
+    if resolution_override is not None:
+        for key in ['grid', 'theory', 'spherical']:
+            default_params[key] = resolution_override.copy()
+
     if name == 'direct':
         return Direct()
     elif name == 'cartesian3d':
@@ -480,10 +492,38 @@ def main():
 
     # Architecture selection
     parser.add_argument("--arch", type=str, default="mlp",
-                       choices=["mlp", "resmlp", "siren", "glu"],
+                       choices=["linear", "mlp", "resmlp", "siren", "glu"],
                        help="Neural network architecture (default: mlp)")
 
+    # Resolution parameters for frequency-based encoders
+    parser.add_argument("--max-radius", type=float, default=None,
+                       help="Max radius (coarsest wavelength) for frequency-based encoders.")
+    parser.add_argument("--min-radius", type=float, default=None,
+                       help="Min radius (finest wavelength) for frequency-based encoders.")
+    parser.add_argument("--frequency-num", type=int, default=None,
+                       help="Number of frequencies. If not set, auto-calculated as ~2 per octave.")
+
     args = parser.parse_args()
+
+    # Build resolution override params if specified
+    resolution_override = None
+    if args.max_radius is not None or args.min_radius is not None:
+        max_r = args.max_radius if args.max_radius is not None else 360.0
+        min_r = args.min_radius if args.min_radius is not None else 1.0
+
+        if args.frequency_num is not None:
+            freq_num = args.frequency_num
+        else:
+            num_octaves = math.log2(max_r / min_r)
+            freq_num = max(4, int(round(2 * num_octaves)))
+
+        resolution_override = {
+            'max_radius': max_r,
+            'min_radius': min_r,
+            'frequency_num': freq_num,
+            'freq_init': 'geometric'
+        }
+        print(f"Resolution override: max_radius={max_r}, min_radius={min_r}, frequency_num={freq_num}")
     
     # Parse samples per prefecture
     # Parse samples per prefecture
@@ -560,7 +600,7 @@ def main():
         print(f"{'='*60}")
         
         # Create encoder once to check dimensions
-        encoder = get_baseline_encoder(encoder_name)
+        encoder = get_baseline_encoder(encoder_name, resolution_override=resolution_override)
         print(f"Encoder dimension: {encoder.n_features}")
         
         for run_idx in range(args.n_runs):
@@ -582,7 +622,7 @@ def main():
                 )
                 
                 # Create fresh model
-                encoder = get_baseline_encoder(encoder_name)
+                encoder = get_baseline_encoder(encoder_name, resolution_override=resolution_override)
                 model = build_location_model(
                     encoder, task="classification", arch=args.arch,
                     num_classes=n_classes, hidden_dim=args.hidden_dim, dropout=args.dropout
@@ -603,7 +643,7 @@ def main():
                 print(f"    [{n_samples:3d} samples] Accuracy: {metrics['accuracy']:.4f}")
                 
                 # Record results
-                csv_results.append({
+                result_row = {
                     'encoder': encoder_name,
                     'arch': args.arch,
                     'encoder_dim': encoder.n_features,
@@ -616,7 +656,13 @@ def main():
                     'val_acc': val_accs[-1] if val_accs else 0,
                     'train_time_sec': train_time,
                     'n_classes': n_classes
-                })
+                }
+                # Add resolution params if override was specified
+                if resolution_override is not None:
+                    result_row['max_radius'] = resolution_override['max_radius']
+                    result_row['min_radius'] = resolution_override['min_radius']
+                    result_row['frequency_num'] = resolution_override['frequency_num']
+                csv_results.append(result_row)
     
     # Save results
     df_results = pd.DataFrame(csv_results)
