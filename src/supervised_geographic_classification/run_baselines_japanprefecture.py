@@ -52,7 +52,8 @@ torch.set_float32_matmul_precision("high")
 # Import baseline encoders
 from pe_baselines import (
     Direct, Cartesian3D, Wrap, Grid,
-    SphereC, SphereCPlus, SphereM, SphereMPlus, Theory
+    SphereC, SphereCPlus, SphereM, SphereMPlus, Theory,
+    Wavelets
 )
 
 # Import nn module for architecture selection
@@ -258,6 +259,17 @@ def get_baseline_encoder(name: str, params: Dict = None, resolution_override: Di
     elif name == 'theory':
         p = params or default_params['theory']
         return Theory(**p)
+    elif name == 'wavelets':
+        wavelets_params = params or {
+            'max_scale': 3,
+            'max_rotations': 75,
+            'k_val': 6,
+            'scale_factor': 1.0,
+            'scale_shift': 1,
+            'dilation_step': 6,
+            'wavelet_type': 'butterfly'
+        }
+        return Wavelets(**wavelets_params)
     else:
         raise ValueError(f"Unknown encoder: {name}")
 
@@ -530,8 +542,8 @@ def main():
     samples_per_pref_list = [int(x) for x in args.train_samples_per_prefecture.split(',')]
     
     # Select encoders
-    all_encoders = ['direct', 'cartesian3d', 'wrap', 'grid', 'spherec', 
-                    'spherecplus', 'spherem', 'spheremplus', 'theory']
+    all_encoders = ['direct', 'cartesian3d', 'wrap', 'grid', 'spherec',
+                    'spherecplus', 'spherem', 'spheremplus', 'theory', 'wavelets']
     if args.encoders == 'all':
         encoder_names = all_encoders
     else:

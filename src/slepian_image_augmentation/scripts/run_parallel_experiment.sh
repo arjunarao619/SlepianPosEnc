@@ -31,7 +31,7 @@ SCRIPT_DIR="/projects/arra4944/SlepianPosEnc/src/slepian_image_augmentation"
 REGIONS="southflorida dhaka maharashtra mexicocity"
 EMBEDDINGS="alphaearth galileo"
 L_SH_VALUES="10 40"
-L_SLEPIAN_VALUES="40 64 96"
+L_SLEPIAN_VALUES="40 80 120 250"
 SEED=123
 
 # Training parameters

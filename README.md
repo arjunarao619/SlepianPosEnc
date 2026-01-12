@@ -1,6 +1,9 @@
-# Slepian Positional Encodings
+# Localized, High Resolution Geographic Representations with Slepian Functions
 
-Spherical Slepian functions for geographic positional encoding in neural networks.
+<p align="center">
+  <img src="visualizations/README_gif.gif" style="display: block; margin: 0 auto; width: 80%;">
+</p>
+<p align="center"> <sup>Slepian functions concentrate representational capacity where it matters. Left: Global spherical harmonics (L=10) spread energy uniformly across the sphere. Right: Our hybrid encoder progressively adds Slepian modes concentrated on a region of interest (India), building fine-grained local detail while preserving global context.<sup></p>
 
 ## Requirements
 

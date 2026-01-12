@@ -35,7 +35,8 @@ from sklearn.model_selection import train_test_split
 # Import baseline encoders
 from pe_baselines import (
     Direct, Cartesian3D, Wrap, Grid,
-    SphereC, SphereCPlus, SphereM, SphereMPlus, Theory
+    SphereC, SphereCPlus, SphereM, SphereMPlus, Theory,
+    Wavelets
 )
 
 # Import nn module for architecture selection
@@ -114,6 +115,18 @@ BASELINE_CONFIGS = {
             'max_radius': 10000,
             'min_radius': 1000,
             'freq_init': 'geometric'
+        }
+    },
+    'wavelets': {
+        'class': Wavelets,
+        'params': {
+            'max_scale': 3,
+            'max_rotations': 75,
+            'k_val': 6,
+            'scale_factor': 1.0,
+            'scale_shift': 1,
+            'dilation_step': 6,
+            'wavelet_type': 'butterfly'
         }
     }
 }
