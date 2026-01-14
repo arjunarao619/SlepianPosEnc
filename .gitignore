@@ -1,4 +1,6 @@
 # Python
+visualizations/*
+!visualizations/README*
 __pycache__/
 *.py[cod]
 *$py.class

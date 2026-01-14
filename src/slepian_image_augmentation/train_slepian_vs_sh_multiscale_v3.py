@@ -15,6 +15,9 @@ _PARENT_DIR = os.path.dirname(_SCRIPT_DIR)
 if _PARENT_DIR not in sys.path:
     sys.path.insert(0, _PARENT_DIR)
 
+# Import trunk classes from nn module
+from nn.models import ResMLPTrunk, SirenTrunk, GLUTrunk
+
 import numpy as np
 import pandas as pd
 import torch
@@ -157,6 +160,46 @@ class LocBottleneck(nn.Module):
         self.out_dim = hidden
     def forward(self, x): return self.net(x)
 
+
+class LinearProjection(nn.Module):
+    """Simple linear projection with out_dim attribute."""
+    def __init__(self, in_dim, out_dim):
+        super().__init__()
+        self.net = nn.Linear(in_dim, out_dim)
+        self.out_dim = out_dim
+    def forward(self, x): return self.net(x)
+
+
+def build_loc_projection(in_dim: int, out_dim: int, arch: str, hidden_dim: int = 256) -> nn.Module:
+    """Build location projection using nn module trunks.
+
+    Args:
+        in_dim: Input feature dimension (from positional encoding)
+        out_dim: Output dimension for location features
+        arch: Architecture type ('linear', 'mlp', 'resmlp', 'siren', 'glu')
+        hidden_dim: Hidden layer dimension (for non-linear archs)
+
+    Returns:
+        Module with out_dim attribute for downstream use.
+    """
+    if arch == "linear":
+        return LinearProjection(in_dim, out_dim)
+    elif arch == "mlp":
+        return LocBottleneck(in_dim, out_dim)
+    elif arch == "resmlp":
+        trunk = ResMLPTrunk(in_dim, hidden_dim=hidden_dim, out_dim=out_dim, depth=2, dropout=0.1)
+        return trunk
+    elif arch == "siren":
+        trunk = SirenTrunk(in_dim, hidden_dim=hidden_dim, out_dim=out_dim, depth=2,
+                           omega_0=1.0, omega_0_initial=30.0)
+        return trunk
+    elif arch == "glu":
+        trunk = GLUTrunk(in_dim, hidden_dim=hidden_dim, out_dim=out_dim, depth=2, dropout=0.1)
+        return trunk
+    else:
+        raise ValueError(f"Unknown architecture: {arch}")
+
+
 class EmbPlusLocRegressor(nn.Module):
     def __init__(self, loc_raw, loc_proj, emb_dim, hidden=128, p_drop=0.1):
         super().__init__()
@@ -226,6 +269,9 @@ def main():
     ap.add_argument("--weight-decay", type=float, default=1e-4)
     ap.add_argument("--num-workers", type=int, default=4)
     ap.add_argument("--seed", type=int, default=123)
+    ap.add_argument("--arch", type=str, default="mlp",
+                    choices=["linear", "mlp", "resmlp", "siren", "glu"],
+                    help="Neural network architecture for location projection")
     ap.add_argument("--csv-out", type=Path, default=None)
     args = ap.parse_args()
 
@@ -252,7 +298,7 @@ def main():
     cap_center = (float(cap_center[0]), float(cap_center[1]))
     K = args.K or shannon_K(args.L_slepian, cap_radius)
 
-    print(f"[{args.region}] {args.embedding_type} | L_sh={args.L_sh} L_slep={args.L_slepian} K={K}")
+    print(f"[{args.region}] {args.embedding_type} | arch={args.arch} L_sh={args.L_sh} L_slep={args.L_slepian} K={K}")
 
     # Load or compute SH
     Xsh = None
@@ -295,7 +341,7 @@ def main():
         def run_model(name, loc_raw):
             if loc_raw is None:
                 loc_raw = torch.zeros((len(df), 1), dtype=torch.float32)
-            loc_proj = LocBottleneck(loc_raw.shape[1], 256)
+            loc_proj = build_loc_projection(loc_raw.shape[1], 256, args.arch)
             model = EmbPlusLocRegressor(loc_raw, loc_proj, emb_dim).to(device)
             model = train_one(model, Ltr, device, args.epochs, args.lr, args.weight_decay, args.patience, Lva)
 
@@ -330,7 +376,7 @@ def main():
         res_sl = run_model(f"{emb_name}+Slepian", Xsl)
 
         res = {
-            "region": args.region, "sigma_km": km, "embedding_type": args.embedding_type,
+            "region": args.region, "arch": args.arch, "sigma_km": km, "embedding_type": args.embedding_type,
             f"R2_{emb_name}": res_emb["R2"], "R2_SH": res_sh["R2"], "R2_Slepian": res_sl["R2"],
             "ΔR2_SH": res_sh["R2"] - res_emb["R2"], "ΔR2_Slepian": res_sl["R2"] - res_emb["R2"],
             f"RMSE_{emb_name}": res_emb["RMSE"], "RMSE_SH": res_sh["RMSE"], "RMSE_Slepian": res_sl["RMSE"],

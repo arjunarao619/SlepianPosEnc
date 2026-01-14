@@ -31,8 +31,9 @@ SCRIPT_DIR="/projects/arra4944/SlepianPosEnc/src/slepian_image_augmentation"
 REGIONS="southflorida dhaka maharashtra mexicocity"
 EMBEDDINGS="alphaearth galileo"
 L_SH_VALUES="10 40"
-L_SLEPIAN_VALUES="40 80 120 250"
-SEED=123
+L_SLEPIAN_VALUES="40 80 120"
+ARCHS="linear mlp resmlp siren glu"
+SEED=4200
 
 # Training parameters
 EPOCHS=120
@@ -57,11 +58,12 @@ if [ $# -lt 1 ]; then
     echo "Example:"
     echo "  $0 /scratch/local/openbuildings_v1"
     echo ""
-    echo "Experiment matrix (48 total):"
+    echo "Experiment matrix (4 regions x 2 embeddings x 2 L_SH x 4 L_Slepian x 5 archs = 320 total):"
     echo "  Regions:     $REGIONS"
     echo "  Embeddings:  $EMBEDDINGS"
     echo "  L_SH:        $L_SH_VALUES"
     echo "  L_Slepian:   $L_SLEPIAN_VALUES"
+    echo "  Archs:       $ARCHS"
     exit 1
 fi
 
@@ -82,6 +84,7 @@ echo "Regions:      $REGIONS"
 echo "Embeddings:   $EMBEDDINGS"
 echo "L_SH:         $L_SH_VALUES"
 echo "L_Slepian:    $L_SLEPIAN_VALUES"
+echo "Archs:        $ARCHS"
 echo "Parallel:     $MAX_PARALLEL_JOBS jobs"
 echo "=============================================="
 echo ""
@@ -148,30 +151,33 @@ for region in $REGIONS; do
     for emb in $EMBEDDINGS; do
         for L_sh in $L_SH_VALUES; do
             for L_slep in $L_SLEPIAN_VALUES; do
-                OUTPUT_FILE="${RESULTS_DIR}/${region}_${emb}_SH${L_sh}_Slep${L_slep}_seed${SEED}.csv"
+                for arch in $ARCHS; do
+                    OUTPUT_FILE="${RESULTS_DIR}/${region}_${emb}_SH${L_sh}_Slep${L_slep}_${arch}_seed${SEED}.csv"
 
-                if [ -f "$OUTPUT_FILE" ]; then
-                    skipped=$((skipped + 1))
-                    continue
-                fi
+                    if [ -f "$OUTPUT_FILE" ]; then
+                        skipped=$((skipped + 1))
+                        continue
+                    fi
 
-                CMD="python train_slepian_vs_sh_multiscale_v3.py \
-                    --data-dir $DATA_DIR \
-                    --region $region \
-                    --embedding-type $emb \
-                    --L-sh $L_sh \
-                    --L-slepian $L_slep \
-                    --precompute-dir $PRECOMPUTE_DIR \
-                    --epochs $EPOCHS \
-                    --patience $PATIENCE \
-                    --batch-size $BATCH_SIZE \
-                    --lr $LR \
-                    --num-workers $NUM_WORKERS_PER_JOB \
-                    --seed $SEED \
-                    --csv-out $OUTPUT_FILE"
+                    CMD="python train_slepian_vs_sh_multiscale_v3.py \
+                        --data-dir $DATA_DIR \
+                        --region $region \
+                        --embedding-type $emb \
+                        --arch $arch \
+                        --L-sh $L_sh \
+                        --L-slepian $L_slep \
+                        --precompute-dir $PRECOMPUTE_DIR \
+                        --epochs $EPOCHS \
+                        --patience $PATIENCE \
+                        --batch-size $BATCH_SIZE \
+                        --lr $LR \
+                        --num-workers $NUM_WORKERS_PER_JOB \
+                        --seed $SEED \
+                        --csv-out $OUTPUT_FILE"
 
-                echo "$CMD" | tr -s ' ' >> "$JOBS_FILE"
-                total=$((total + 1))
+                    echo "$CMD" | tr -s ' ' >> "$JOBS_FILE"
+                    total=$((total + 1))
+                done
             done
         done
     done
@@ -204,32 +210,32 @@ else
     fi
 fi
 
-# =============================================================================
-# STEP 4: Generate TikZ Output
-# =============================================================================
-echo ""
-echo "=============================================="
-echo "Generating TikZ Figure"
-echo "=============================================="
+# # =============================================================================
+# # STEP 4: Generate TikZ Output
+# # =============================================================================
+# echo ""
+# echo "=============================================="
+# echo "Generating TikZ Figure"
+# echo "=============================================="
 
-python scripts/aggregate_results_to_tikz.py \
-    --results-dir "$RESULTS_DIR" \
-    --output "${RESULTS_DIR}/tikz_coordinates.tex"
+# python scripts/aggregate_results_to_tikz.py \
+#     --results-dir "$RESULTS_DIR" \
+#     --output "${RESULTS_DIR}/tikz_coordinates.tex"
 
-# =============================================================================
-# DONE
-# =============================================================================
-echo ""
-echo "=============================================="
-echo "EXPERIMENT COMPLETE"
-echo "=============================================="
-echo ""
-echo "Results directory: $RESULTS_DIR"
-echo ""
-echo "Output files:"
-ls -lh "$RESULTS_DIR"/*.csv 2>/dev/null | wc -l | xargs -I {} echo "  {} CSV result files"
-echo "  tikz_coordinates.tex"
-echo ""
-echo "To view results:"
-echo "  ls $RESULTS_DIR/"
-echo "=============================================="
+# # =============================================================================
+# # DONE
+# # =============================================================================
+# echo ""
+# echo "=============================================="
+# echo "EXPERIMENT COMPLETE"
+# echo "=============================================="
+# echo ""
+# echo "Results directory: $RESULTS_DIR"
+# echo ""
+# echo "Output files:"
+# ls -lh "$RESULTS_DIR"/*.csv 2>/dev/null | wc -l | xargs -I {} echo "  {} CSV result files"
+# echo "  tikz_coordinates.tex"
+# echo ""
+# echo "To view results:"
+# echo "  ls $RESULTS_DIR/"
+# echo "=============================================="
