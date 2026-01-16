@@ -200,6 +200,16 @@ def build_loc_projection(in_dim: int, out_dim: int, arch: str, hidden_dim: int =
         raise ValueError(f"Unknown architecture: {arch}")
 
 
+class EmbOnlyRegressor(nn.Module):
+    """Embedding-only model (no location features)."""
+    def __init__(self, emb_dim, hidden=128, p_drop=0.1):
+        super().__init__()
+        self.head = nn.Sequential(nn.Linear(emb_dim, hidden), nn.ReLU(), nn.Dropout(p_drop), nn.Linear(hidden, 1))
+
+    def forward(self, idx, emb):
+        return self.head(emb).squeeze(-1)
+
+
 class EmbPlusLocRegressor(nn.Module):
     def __init__(self, loc_raw, loc_proj, emb_dim, hidden=128, p_drop=0.1):
         super().__init__()
@@ -273,6 +283,8 @@ def main():
                     choices=["linear", "mlp", "resmlp", "siren", "glu"],
                     help="Neural network architecture for location projection")
     ap.add_argument("--csv-out", type=Path, default=None)
+    ap.add_argument("--image-only", action="store_true",
+                    help="Only run image embedding baseline (skip SH and Slepian)")
     args = ap.parse_args()
 
     torch.manual_seed(args.seed)
@@ -298,29 +310,34 @@ def main():
     cap_center = (float(cap_center[0]), float(cap_center[1]))
     K = args.K or shannon_K(args.L_slepian, cap_radius)
 
-    print(f"[{args.region}] {args.embedding_type} | arch={args.arch} L_sh={args.L_sh} L_slep={args.L_slepian} K={K}")
+    if args.image_only:
+        print(f"[{args.region}] {args.embedding_type} | arch={args.arch} (IMAGE-ONLY)")
+    else:
+        print(f"[{args.region}] {args.embedding_type} | arch={args.arch} L_sh={args.L_sh} L_slep={args.L_slepian} K={K}")
 
-    # Load or compute SH
+    # Load or compute SH (skip if image-only)
     Xsh = None
-    if args.precompute_dir:
-        Xsh = load_precomputed_sh(args.precompute_dir, args.region, args.L_sh)
-        if Xsh is not None:
-            print(f"  Loaded precomputed SH: {Xsh.shape}")
-    if Xsh is None:
-        print(f"  Computing SH L={args.L_sh}...")
-        Xsh = sh_design_matrix_compute(coords_all, args.L_sh)
-    Xsh = torch.from_numpy(Xsh)
+    if not args.image_only:
+        if args.precompute_dir:
+            Xsh = load_precomputed_sh(args.precompute_dir, args.region, args.L_sh)
+            if Xsh is not None:
+                print(f"  Loaded precomputed SH: {Xsh.shape}")
+        if Xsh is None:
+            print(f"  Computing SH L={args.L_sh}...")
+            Xsh = sh_design_matrix_compute(coords_all, args.L_sh)
+        Xsh = torch.from_numpy(Xsh)
 
-    # Load or compute Slepian
+    # Load or compute Slepian (skip if image-only)
     Xsl, lam = None, None
-    if args.precompute_dir:
-        Xsl, lam = load_precomputed_slepian(args.precompute_dir, args.region, args.L_slepian, K)
-        if Xsl is not None:
-            print(f"  Loaded precomputed Slepian: {Xsl.shape}")
-    if Xsl is None:
-        print(f"  Computing Slepian L={args.L_slepian} K={K}...")
-        Xsl, lam = slepian_design_matrix_compute(coords_all, cap_center, cap_radius, args.L_slepian, K)
-    Xsl = torch.from_numpy(Xsl)
+    if not args.image_only:
+        if args.precompute_dir:
+            Xsl, lam = load_precomputed_slepian(args.precompute_dir, args.region, args.L_slepian, K)
+            if Xsl is not None:
+                print(f"  Loaded precomputed Slepian: {Xsl.shape}")
+        if Xsl is None:
+            print(f"  Computing Slepian L={args.L_slepian} K={K}...")
+            Xsl, lam = slepian_design_matrix_compute(coords_all, cap_center, cap_radius, args.L_slepian, K)
+        Xsl = torch.from_numpy(Xsl)
 
     # Targets
     scales = [int(float(s)) for s in args.scales_km.split(",")]
@@ -340,9 +357,11 @@ def main():
 
         def run_model(name, loc_raw):
             if loc_raw is None:
-                loc_raw = torch.zeros((len(df), 1), dtype=torch.float32)
-            loc_proj = build_loc_projection(loc_raw.shape[1], 256, args.arch)
-            model = EmbPlusLocRegressor(loc_raw, loc_proj, emb_dim).to(device)
+                # Use embedding-only model (no location features)
+                model = EmbOnlyRegressor(emb_dim).to(device)
+            else:
+                loc_proj = build_loc_projection(loc_raw.shape[1], 256, args.arch)
+                model = EmbPlusLocRegressor(loc_raw, loc_proj, emb_dim).to(device)
             model = train_one(model, Ltr, device, args.epochs, args.lr, args.weight_decay, args.patience, Lva)
 
             y_true, y_pred = [], []
@@ -372,17 +391,27 @@ def main():
 
         emb_name = args.embedding_type.upper()
         res_emb = run_model(f"{emb_name}_only", None)
-        res_sh = run_model(f"{emb_name}+SH", Xsh)
-        res_sl = run_model(f"{emb_name}+Slepian", Xsl)
 
-        res = {
-            "region": args.region, "arch": args.arch, "sigma_km": km, "embedding_type": args.embedding_type,
-            f"R2_{emb_name}": res_emb["R2"], "R2_SH": res_sh["R2"], "R2_Slepian": res_sl["R2"],
-            "ΔR2_SH": res_sh["R2"] - res_emb["R2"], "ΔR2_Slepian": res_sl["R2"] - res_emb["R2"],
-            f"RMSE_{emb_name}": res_emb["RMSE"], "RMSE_SH": res_sh["RMSE"], "RMSE_Slepian": res_sl["RMSE"],
-            "L_sh": args.L_sh, "L_slepian": args.L_slepian, "K": K, "cap_radius_deg": cap_radius,
-        }
-        print(f"  σ={km:2d}km: R2_emb={res_emb['R2']:.4f} R2_SH={res_sh['R2']:.4f} R2_Slep={res_sl['R2']:.4f}")
+        if args.image_only:
+            # Image-only mode: only run embedding model
+            res = {
+                "region": args.region, "arch": args.arch, "sigma_km": km, "embedding_type": args.embedding_type,
+                f"R2_{emb_name}": res_emb["R2"], f"RMSE_{emb_name}": res_emb["RMSE"],
+            }
+            print(f"  σ={km:2d}km: R2_emb={res_emb['R2']:.4f}")
+        else:
+            # Full comparison mode: run all three models
+            res_sh = run_model(f"{emb_name}+SH", Xsh)
+            res_sl = run_model(f"{emb_name}+Slepian", Xsl)
+
+            res = {
+                "region": args.region, "arch": args.arch, "sigma_km": km, "embedding_type": args.embedding_type,
+                f"R2_{emb_name}": res_emb["R2"], "R2_SH": res_sh["R2"], "R2_Slepian": res_sl["R2"],
+                "ΔR2_SH": res_sh["R2"] - res_emb["R2"], "ΔR2_Slepian": res_sl["R2"] - res_emb["R2"],
+                f"RMSE_{emb_name}": res_emb["RMSE"], "RMSE_SH": res_sh["RMSE"], "RMSE_Slepian": res_sl["RMSE"],
+                "L_sh": args.L_sh, "L_slepian": args.L_slepian, "K": K, "cap_radius_deg": cap_radius,
+            }
+            print(f"  σ={km:2d}km: R2_emb={res_emb['R2']:.4f} R2_SH={res_sh['R2']:.4f} R2_Slep={res_sl['R2']:.4f}")
         results.append(res)
 
     if args.csv_out:

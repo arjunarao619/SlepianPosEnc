@@ -33,7 +33,7 @@ EMBEDDINGS="alphaearth galileo"
 L_SH_VALUES="10 40"
 L_SLEPIAN_VALUES="40 80 120"
 ARCHS="linear mlp resmlp siren glu"
-SEED=4200
+SEED=1234
 
 # Training parameters
 EPOCHS=120
