@@ -15,7 +15,7 @@ FIGURES_DIR="$RESULTS_DIR/figures"
 mkdir -p "$RESULTS_DIR" "$CACHE_DIR" "$FIGURES_DIR"
 
 # Training parameters
-ARCHS="linear mlp resmlp siren glu"
+ARCHS="mlp"
 # ARCHS="mlp"
 N_RUNS=1
 EPOCHS=500

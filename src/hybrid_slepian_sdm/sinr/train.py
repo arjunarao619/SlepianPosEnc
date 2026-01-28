@@ -23,8 +23,18 @@ class Trainer():
         self.compute_loss = losses.get_loss_function(params)
         self.encode_location = self.train_loader.dataset.enc.encode
 
+        # Collect all trainable parameters (model + encoder if trainable)
+        all_params = list(self.model.parameters())
+
+        # Check if encoder has trainable parameters (e.g., Deep RFF)
+        enc = self.train_loader.dataset.enc
+        if hasattr(enc, 'baseline_adapter') and enc.baseline_adapter is not None:
+            if enc.baseline_adapter.trainable:
+                all_params.extend(list(enc.baseline_adapter.parameters()))
+                print(f"  Including encoder parameters in optimizer (trainable encoder: {params['input_enc']})")
+
         # define optimization objects:
-        self.optimizer = torch.optim.Adam(self.model.parameters(), params['lr'])
+        self.optimizer = torch.optim.Adam(all_params, params['lr'])
         self.lr_scheduler = torch.optim.lr_scheduler.ExponentialLR(self.optimizer, gamma=params['lr_decay'])
 
     def train_one_epoch(self):

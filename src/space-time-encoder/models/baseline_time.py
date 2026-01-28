@@ -1,41 +1,41 @@
 # models/baseline_time.py
+# Matches the original paper implementation exactly
 import numpy as np
 import torch
 from scipy.special import legendre
 
-# Orthonormal Legendre on [-1, 1]
-def legendre_orthonormal(n: int, t: torch.Tensor) -> torch.Tensor:
-    t_np = t.detach().cpu().numpy()
-    Pn_np = legendre(n)(t_np)
-    Pn = torch.as_tensor(Pn_np, device=t.device, dtype=t.dtype)
-    return Pn * np.sqrt((2.0 * n + 1.0) / 2.0)
-
 inv_sqrt2 = 1.0 / np.sqrt(2.0)
 
+# Legendre polynomials (NO orthonormalization - matches paper)
+def legendre_fn(degree: int, t: torch.Tensor) -> torch.Tensor:
+    t_np = t.detach().cpu().numpy()
+    Pn_np = legendre(degree)(t_np)
+    return torch.as_tensor(Pn_np, device=t.device, dtype=t.dtype)
+
 level_0_time_embedding_functions = {
-    # Baselines
-    "no_time":    lambda degree, t: torch.zeros_like(t, dtype=t.dtype, device=t.device),  # unused when no_time path is active
-    "time_copy":  lambda degree, t: t,          # they duplicate t across dims (non-orthogonal) :contentReference[oaicite:3]{index=3}
-    "monomial":   lambda degree, t: t**degree,  # non-orthogonal
+    # Baselines (matching paper exactly)
+    "no_time":    lambda degree, t: torch.zeros_like(t, dtype=t.dtype, device=t.device),
+    "time_copy":  lambda degree, t: t / 2,      # Paper divides by 2
+    "monomial":   lambda degree, t: t**degree,
 
-    # Orthonormal Legendre
-    "legendre":   legendre_orthonormal,
+    # Legendre (no orthonormalization factor - matches paper)
+    "legendre":   legendre_fn,
 
-    # Fourier pair with 1/sqrt(2) scaling & πk t / 2 argument (orthogonal) :contentReference[oaicite:4]{index=4}
-    "sin": lambda degree, t: torch.sin(torch.pi * (degree + 1) * t / 2) * inv_sqrt2,
-    "cos": lambda degree, t: torch.cos(torch.pi * (degree + 1) * t / 2) * inv_sqrt2,
+    # Fourier: sin(π*degree*t/2)/√2 and cos(π*degree*t/2)/√2 (matches paper)
+    "sin": lambda degree, t: torch.sin(torch.pi * degree * t / 2) / np.sqrt(2),
+    "cos": lambda degree, t: torch.cos(torch.pi * degree * t / 2) / np.sqrt(2),
 
-    # Two triangle variants (piecewise linear family, non-orthogonal) :contentReference[oaicite:5]{index=5}
+    # Triangle variants (matches paper)
     "triangle_1": lambda degree, t: 2 * torch.maximum(
-        ((degree + 1) * t + 1) % 2 - 1,
-        2 - ((degree + 1) * t + 1) % 2 - 1
+        (degree * t + 1) % 2 - 1,
+        2 - (degree * t + 1) % 2 - 1
     ) - 1,
     "triangle_2": lambda degree, t: 2 * torch.maximum(
-        ((degree + 1) * t) % 2 - 1,
-        2 - ((degree + 1) * t) % 2 - 1
+        (degree * t) % 2 - 1,
+        2 - (degree * t) % 2 - 1
     ) - 1,
 
-    # A constant function (normalized on [-1, 1])—not used for the “no time” baseline per paper (§4.1).
+    # Constant (for completeness)
     "constant": lambda degree, t: torch.ones_like(t, dtype=t.dtype, device=t.device) * inv_sqrt2,
 }
 

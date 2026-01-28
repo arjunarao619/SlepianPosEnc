@@ -114,6 +114,213 @@ def compute_global_sh_features(coords: np.ndarray, L: int, verbose: bool = True)
     return np.column_stack(features).astype(np.float32)
 
 
+def compute_coverage(
+    coords: np.ndarray,
+    cap_center: Tuple[float, float],
+    cap_radius_deg: float
+) -> float:
+    """
+    Compute the percentage of data points within the spherical cap.
+
+    Args:
+        coords: [N, 2] array of (lon, lat) in degrees
+        cap_center: (lon, lat) center of cap in degrees
+        cap_radius_deg: Cap radius in degrees
+
+    Returns:
+        Coverage percentage (0-100)
+    """
+    # Convert to radians
+    lon1 = np.radians(coords[:, 0])
+    lat1 = np.radians(coords[:, 1])
+    lon2 = np.radians(cap_center[0])
+    lat2 = np.radians(cap_center[1])
+
+    # Haversine formula for angular distance
+    dlat = lat2 - lat1
+    dlon = lon2 - lon1
+    a = np.sin(dlat / 2)**2 + np.cos(lat1) * np.cos(lat2) * np.sin(dlon / 2)**2
+    angular_dist_deg = np.degrees(2 * np.arcsin(np.sqrt(a)))
+
+    # Count points within cap
+    inside_cap = angular_dist_deg <= cap_radius_deg
+    coverage_pct = 100.0 * inside_cap.sum() / len(coords)
+
+    return coverage_pct
+
+
+def compute_angular_distances(
+    coords: np.ndarray,
+    cap_center: Tuple[float, float]
+) -> np.ndarray:
+    """
+    Compute angular distance from cap center for all points.
+
+    Args:
+        coords: [N, 2] array of (lon, lat) in degrees
+        cap_center: (lon, lat) center of cap in degrees
+
+    Returns:
+        [N] array of angular distances in degrees
+    """
+    lon1 = np.radians(coords[:, 0])
+    lat1 = np.radians(coords[:, 1])
+    lon2 = np.radians(cap_center[0])
+    lat2 = np.radians(cap_center[1])
+
+    dlat = lat2 - lat1
+    dlon = lon2 - lon1
+    a = np.sin(dlat / 2)**2 + np.cos(lat1) * np.cos(lat2) * np.sin(dlon / 2)**2
+    angular_dist_deg = np.degrees(2 * np.arcsin(np.sqrt(a)))
+
+    return angular_dist_deg
+
+
+def partition_by_cap(
+    coords: np.ndarray,
+    cap_center: Tuple[float, float],
+    cap_radius_deg: float
+) -> np.ndarray:
+    """
+    Partition points into inside-cap and outside-cap.
+
+    Args:
+        coords: [N, 2] array of (lon, lat) in degrees
+        cap_center: (lon, lat) center of cap in degrees
+        cap_radius_deg: Cap radius in degrees
+
+    Returns:
+        Boolean mask (True = inside cap)
+    """
+    angular_dist_deg = compute_angular_distances(coords, cap_center)
+    return angular_dist_deg <= cap_radius_deg
+
+
+def find_coverage_radius(
+    coords: np.ndarray,
+    cap_center: Tuple[float, float],
+    target_coverage: float = 0.5,
+) -> float:
+    """
+    Binary search for the SMALLEST radius that covers at least target_coverage fraction.
+
+    Args:
+        coords: [N, 2] array of (lon, lat) in degrees
+        cap_center: (lon, lat) center of cap in degrees
+        target_coverage: Target fraction of points inside cap (0-1)
+
+    Returns:
+        Smallest cap radius (in degrees) that covers at least target_coverage
+    """
+    low, high = 0.1, 25.0  # Arctic data spans ~65°N to 90°N (25° from pole)
+    while high - low > 0.1:
+        mid = (low + high) / 2
+        cov = compute_coverage(coords, cap_center, mid) / 100.0
+        if cov < target_coverage:
+            low = mid
+        else:
+            high = mid
+    # Return high to ensure we have at least target coverage
+    return high
+
+
+def create_concentration_splits(
+    coords: np.ndarray,
+    targets: np.ndarray,
+    cap_center: Tuple[float, float],
+    cap_radius_deg: float,
+    test_size_per_region: int = 10000,
+    val_ratio: float = 0.1,
+    seed: int = 42
+) -> Dict:
+    """
+    Create train/val/test splits for concentration control experiment.
+    DEPRECATED: Use create_coverage_curve_splits instead.
+    """
+    inside_mask = partition_by_cap(coords, cap_center, cap_radius_deg)
+
+    inside_idx = np.where(inside_mask)[0]
+    outside_idx = np.where(~inside_mask)[0]
+
+    # Determine test size (equal for both regions)
+    N_test = min(test_size_per_region, len(inside_idx) // 5, len(outside_idx) // 2)
+
+    rng = np.random.default_rng(seed)
+
+    # Sample test sets (equal size from inside and outside)
+    inside_test_idx = rng.choice(inside_idx, N_test, replace=False)
+    outside_test_idx = rng.choice(outside_idx, N_test, replace=False)
+
+    # Remaining inside points for train/val
+    inside_trainval_idx = np.setdiff1d(inside_idx, inside_test_idx)
+
+    # Split train/val from inside-only pool
+    n_val = int(len(inside_trainval_idx) * val_ratio)
+    rng.shuffle(inside_trainval_idx)
+    val_idx = inside_trainval_idx[:n_val]
+    train_idx = inside_trainval_idx[n_val:]
+
+    return {
+        'train_idx': train_idx,
+        'val_idx': val_idx,
+        'test_inside_idx': inside_test_idx,
+        'test_outside_idx': outside_test_idx,
+        'n_test_per_region': N_test,
+        'n_inside': len(inside_idx),
+        'n_outside': len(outside_idx),
+        'coverage': len(inside_idx) / len(coords) * 100
+    }
+
+
+def create_standard_splits(
+    coords: np.ndarray,
+    targets: np.ndarray,
+    test_ratio: float = 0.1,
+    val_ratio: float = 0.1,
+    seed: int = 42
+) -> Dict:
+    """
+    Create train/val/test splits for cap sweep experiment.
+
+    - Train: ALL data
+    - Val: ALL data
+    - Test: ALL data
+
+    Args:
+        coords: [N, 2] array of (lon, lat) in degrees
+        targets: [N] array of target values
+        test_ratio: Fraction of data for test set
+        val_ratio: Fraction of remaining data for validation
+        seed: Random seed
+
+    Returns:
+        Dictionary with indices and metadata
+    """
+    n_total = len(coords)
+    rng = np.random.default_rng(seed)
+
+    # Shuffle all indices
+    all_idx = np.arange(n_total)
+    rng.shuffle(all_idx)
+
+    # Split into train/val/test
+    n_test = int(n_total * test_ratio)
+    n_val = int((n_total - n_test) * val_ratio)
+
+    test_idx = all_idx[:n_test]
+    val_idx = all_idx[n_test:n_test + n_val]
+    train_idx = all_idx[n_test + n_val:]
+
+    return {
+        'train_idx': train_idx,
+        'val_idx': val_idx,
+        'test_idx': test_idx,
+        'n_train': len(train_idx),
+        'n_val': len(val_idx),
+        'n_test': len(test_idx),
+    }
+
+
 def compute_slepian_features(
     coords: np.ndarray,
     L_slepian: int,
@@ -236,6 +443,8 @@ def compute_and_cache_features(
         'L_slepian': L_slepian,
         'cap_radius_deg': cap_radius_deg,
         'cap_center': list(cap_center),
+        'cap_center_lon': cap_center[0],
+        'cap_center_lat': cap_center[1],
         'num_modes_initial': num_modes,
         'num_modes_kept': int(kept_modes),
         'lambda_thresh': lambda_thresh,
@@ -531,6 +740,41 @@ def evaluate_model(
     }
 
 
+@torch.no_grad()
+def evaluate_concentration(
+    model: nn.Module,
+    test_inside_loader: DataLoader,
+    test_outside_loader: DataLoader,
+    device: torch.device,
+    y_mean: float,
+    y_std: float
+) -> Dict:
+    """
+    Evaluate model separately on inside and outside test sets.
+    DEPRECATED: Use evaluate_coverage_curve instead.
+    """
+    metrics_inside = evaluate_model(model, test_inside_loader, device, y_mean, y_std)
+    metrics_outside = evaluate_model(model, test_outside_loader, device, y_mean, y_std)
+
+    delta_r2 = metrics_inside['r2'] - metrics_outside['r2']
+
+    return {
+        'r2_inside': metrics_inside['r2'],
+        'r2_outside': metrics_outside['r2'],
+        'delta_r2': delta_r2,  # PRIMARY METRIC: concentration measure
+        'mse_inside': metrics_inside['mse'],
+        'mse_outside': metrics_outside['mse'],
+        'rmse_raw_inside': metrics_inside['rmse_raw'],
+        'rmse_raw_outside': metrics_outside['rmse_raw'],
+        'mae_inside': metrics_inside['mae'],
+        'mae_outside': metrics_outside['mae'],
+        'mae_raw_inside': metrics_inside['mae_raw'],
+        'mae_raw_outside': metrics_outside['mae_raw'],
+    }
+
+
+
+
 # =============================================================================
 # Visualization
 # =============================================================================
@@ -622,6 +866,10 @@ def main():
                         help="Number of Slepian modes (default: auto based on L)")
     parser.add_argument("--lambda-thresh", type=float, default=0.05,
                         help="Eigenvalue threshold for mode selection")
+    parser.add_argument("--cap-center-lon", type=float, default=0.0,
+                        help="Cap center longitude (default: 0.0 for North Pole)")
+    parser.add_argument("--cap-center-lat", type=float, default=90.0,
+                        help="Cap center latitude (default: 90.0 for North Pole)")
     parser.add_argument("--cache-dir", type=str, default="cache",
                         help="Directory for feature cache")
     parser.add_argument("--force-recompute", action="store_true",
@@ -660,6 +908,12 @@ def main():
     parser.add_argument("--arch", type=str, default="mlp",
                        choices=["linear", "mlp", "resmlp", "siren", "glu"],
                        help="Neural network architecture (default: mlp)")
+
+    # Cap sweep experiment: vary cap radius to test concentration hypothesis
+    parser.add_argument("--cap-sweep", action="store_true",
+                       help="Run cap radius sweep experiment: build NEW Slepian basis for each coverage, train on ALL data, evaluate on ALL test data")
+    parser.add_argument("--target-coverages", type=str, default="0.1,0.5,1.0",
+                       help="Comma-separated target coverage fractions (cap radius found via binary search)")
 
     args = parser.parse_args()
 
@@ -703,6 +957,231 @@ def main():
 
     print(f"\nTarget normalization: mean={y_mean:.6f}, std={y_std:.4f}")
 
+    # =========================================================================
+    # CAP SWEEP EXPERIMENT: Vary cap radius to test concentration hypothesis
+    # =========================================================================
+    if args.cap_sweep:
+        print("\n" + "=" * 70)
+        print("CAP SWEEP EXPERIMENT")
+        print("Build NEW Slepian basis for each coverage fraction")
+        print("Train on ALL data, evaluate on ALL test data")
+        print("=" * 70)
+
+        cap_center = (args.cap_center_lon, args.cap_center_lat)
+        target_coverages = [float(x) for x in args.target_coverages.split(',')]
+
+        if not HAVE_PYSH:
+            raise RuntimeError("PySHTOOLS required for cap sweep experiment")
+
+        # Create standard train/val/test splits (SAME for all configs)
+        splits = create_standard_splits(
+            coords, targets_norm,
+            test_ratio=args.test_split,
+            val_ratio=args.val_split,
+            seed=args.seed
+        )
+
+        print(f"\nData splits (SAME for all cap radii):")
+        print(f"  Train: {splits['n_train']:,}")
+        print(f"  Val: {splits['n_val']:,}")
+        print(f"  Test: {splits['n_test']:,}")
+
+        # Create coordinate arrays
+        train_coords_np = coords[splits['train_idx']]
+        val_coords_np = coords[splits['val_idx']]
+        test_coords_np = coords[splits['test_idx']]
+
+        train_targets_t = torch.tensor(targets_norm[splits['train_idx']], dtype=torch.float32)
+        val_targets_t = torch.tensor(targets_norm[splits['val_idx']], dtype=torch.float32)
+        test_targets_t = torch.tensor(targets_norm[splits['test_idx']], dtype=torch.float32)
+
+        train_indices_t = torch.tensor(splits['train_idx'], dtype=torch.long)
+        val_indices_t = torch.tensor(splits['val_idx'], dtype=torch.long)
+        test_indices_t = torch.tensor(splits['test_idx'], dtype=torch.long)
+
+        csv_results = []
+
+        # ---------------------------------------------------------------------
+        # SWEEP OVER TARGET COVERAGES
+        # ---------------------------------------------------------------------
+        for target_cov in target_coverages:
+            print(f"\n{'=' * 70}")
+            print(f"TARGET COVERAGE: {target_cov*100:.0f}%")
+            print(f"{'=' * 70}")
+
+            # Find cap radius that achieves target coverage
+            cap_radius = find_coverage_radius(coords, cap_center, target_cov)
+            actual_cov = compute_coverage(coords, cap_center, cap_radius) / 100.0
+
+            print(f"  Cap center: {cap_center}")
+            print(f"  Cap radius: {cap_radius:.2f}° → actual coverage: {actual_cov*100:.1f}%")
+
+            # Auto-calculate num_modes for this cap radius
+            theta_rad = cap_radius * np.pi / 180.0
+            shannon_approx = int((args.L_slepian + 1) ** 2 * (1 - np.cos(theta_rad)) / 2)
+            num_modes = min(shannon_approx, (args.L_slepian + 1) ** 2)
+
+            # Build cache path for this cap radius
+            cache_dir = "cache/mss_cap_sweep"
+            os.makedirs(cache_dir, exist_ok=True)
+            cache_path = os.path.join(
+                cache_dir,
+                f"mss_L{args.L_slepian}_rad{cap_radius:.2f}_lon{cap_center[0]}_lat{cap_center[1]}_lam{args.lambda_thresh}.pt"
+            )
+
+            # Compute or load features for this cap radius
+            if os.path.exists(cache_path) and not args.force_recompute:
+                print(f"  Loading cached features from {cache_path}...")
+                feature_data = load_cached_features(cache_path, verbose=False)
+            else:
+                print(f"  Computing NEW Slepian basis for cap_radius={cap_radius:.2f}°...")
+                feature_data = compute_and_cache_features(
+                    coords,
+                    L_global=args.L_global,
+                    L_slepian=args.L_slepian,
+                    cap_radius_deg=cap_radius,
+                    num_modes=num_modes,
+                    lambda_thresh=args.lambda_thresh,
+                    cap_center=cap_center,
+                    cache_path=cache_path,
+                    verbose=True
+                )
+
+            features = feature_data['features']
+            metadata = feature_data['metadata']
+
+            feature_dim = features.shape[1]
+            slepian_modes = metadata.get('num_modes_kept', 0)
+            global_dim = metadata.get('global_dim', args.L_global ** 2)
+
+            print(f"  Feature dim: {feature_dim} (global={global_dim}, slepian={slepian_modes})")
+
+            # Create encoder with features for this cap
+            encoder = CachedFeatureEncoder(features)
+
+            # Create datasets (using same splits)
+            train_dataset = IndexedDataset(
+                torch.tensor(train_coords_np, dtype=torch.float32),
+                train_targets_t, train_indices_t
+            )
+            val_dataset = IndexedDataset(
+                torch.tensor(val_coords_np, dtype=torch.float32),
+                val_targets_t, val_indices_t
+            )
+            test_dataset = IndexedDataset(
+                torch.tensor(test_coords_np, dtype=torch.float32),
+                test_targets_t, test_indices_t
+            )
+
+            train_loader = DataLoader(
+                train_dataset, batch_size=args.batch_size, shuffle=True,
+                num_workers=args.num_workers, pin_memory=True
+            )
+            val_loader = DataLoader(
+                val_dataset, batch_size=args.batch_size, shuffle=False,
+                num_workers=args.num_workers, pin_memory=True
+            )
+            test_loader = DataLoader(
+                test_dataset, batch_size=args.batch_size, shuffle=False,
+                num_workers=args.num_workers, pin_memory=True
+            )
+
+            # -----------------------------------------------------------------
+            # MULTIPLE RUNS
+            # -----------------------------------------------------------------
+            for run_idx in range(args.n_runs):
+                run_seed = args.seed + run_idx
+                torch.manual_seed(run_seed)
+                np.random.seed(run_seed)
+
+                print(f"\n  Run {run_idx + 1}/{args.n_runs} (seed={run_seed})")
+
+                # Create fresh model
+                model = build_indexed_location_model(
+                    encoder, task="regression", arch=args.arch,
+                    hidden_dim=args.hidden_dim, dropout=args.dropout
+                ).to(device)
+
+                # Train on ALL data
+                t_start = time.time()
+                train_losses, val_losses = train_model(
+                    model, train_loader, val_loader, device,
+                    epochs=args.epochs, lr=args.lr, patience=args.patience,
+                    verbose=False
+                )
+                train_time = time.time() - t_start
+
+                # Evaluate on ALL test data
+                metrics = evaluate_model(model, test_loader, device, y_mean, y_std)
+
+                print(f"    R²={metrics['r2']:.4f}, RMSE={metrics['rmse_raw']:.4f}, time={train_time:.1f}s")
+
+                # Record results
+                csv_results.append({
+                    'method': 'slepian_cap',
+                    'dataset': 'arctic_mss',
+                    'target_coverage': target_cov,
+                    'cap_radius_deg': cap_radius,
+                    'actual_coverage_pct': actual_cov * 100,
+                    'L_global': args.L_global,
+                    'L_slepian': args.L_slepian,
+                    'lambda_thresh': args.lambda_thresh,
+                    'feature_dim': feature_dim,
+                    'slepian_modes_kept': slepian_modes,
+                    'run': run_idx + 1,
+                    'seed': run_seed,
+                    'r2': metrics['r2'],
+                    'rmse_raw': metrics['rmse_raw'],
+                    'mae_raw': metrics['mae_raw'],
+                    'n_train': splits['n_train'],
+                    'n_val': splits['n_val'],
+                    'n_test': splits['n_test'],
+                    'train_time_sec': train_time,
+                    'arch': args.arch,
+                })
+
+        # Save CSV results
+        if args.csv_path:
+            df_results = pd.DataFrame(csv_results)
+            os.makedirs(os.path.dirname(args.csv_path), exist_ok=True)
+            df_results.to_csv(args.csv_path, index=False)
+            print(f"\n{'=' * 70}")
+            print(f"Saved cap sweep results to {args.csv_path}")
+
+            # Print summary by target coverage
+            print("\nSummary (mean ± std R² by target coverage):")
+            summary = df_results.groupby('target_coverage')['r2'].agg(['mean', 'std'])
+            print(summary.round(4).to_string())
+
+            # Also show feature dimensions
+            print("\nFeature dimensions by coverage:")
+            dim_summary = df_results.groupby('target_coverage')[['feature_dim', 'slepian_modes_kept', 'cap_radius_deg']].first()
+            print(dim_summary.to_string())
+
+        # Save JSON metadata
+        if args.results_json:
+            json_data = {
+                'experiment': 'cap_sweep',
+                'hypothesis': 'Slepian concentrates capacity inside cap - R² should increase with coverage',
+                'configuration': vars(args),
+                'target_coverages': target_coverages,
+                'splits': {
+                    'n_train': int(splits['n_train']),
+                    'n_val': int(splits['n_val']),
+                    'n_test': int(splits['n_test']),
+                },
+                'csv_path': args.csv_path
+            }
+            os.makedirs(os.path.dirname(args.results_json), exist_ok=True)
+            with open(args.results_json, 'w') as f:
+                json.dump(json_data, f, indent=2)
+            print(f"Saved metadata to {args.results_json}")
+
+        return  # Exit after cap sweep experiment
+
+    # =========================================================================
+    # STANDARD EXPERIMENT (original code path)
+    # =========================================================================
     # Quick test mode: override splits
     if args.quick_test:
         print("\n*** QUICK TEST MODE: Using reduced data sizes ***")
@@ -741,6 +1220,11 @@ def main():
     n_train = len(X_train)
     n_val = len(X_val)
 
+    # Compute coverage
+    cap_center = (args.cap_center_lon, args.cap_center_lat)
+    coverage_pct = compute_coverage(all_coords, cap_center, args.cap_radius)
+    print(f"Cap coverage: {coverage_pct:.1f}% of data points within cap")
+
     # Cache path (include quicktest suffix if in quick test mode)
     cache_suffix = "_quicktest" if args.quick_test else ""
     cache_path = os.path.join(
@@ -764,7 +1248,7 @@ def main():
             cap_radius_deg=args.cap_radius,
             num_modes=args.num_modes,
             lambda_thresh=args.lambda_thresh,
-            cap_center=(0.0, 90.0),  # North Pole
+            cap_center=cap_center,
             cache_path=cache_path
         )
 
@@ -894,6 +1378,9 @@ def main():
                 'L_global': args.L_global,
                 'L_slepian': args.L_slepian,
                 'cap_radius': args.cap_radius,
+                'cap_center_lon': args.cap_center_lon,
+                'cap_center_lat': args.cap_center_lat,
+                'coverage_pct': coverage_pct,
                 'feature_dim': features.shape[1],
                 'global_dim': feat_metadata.get('global_dim', 0),
                 'slepian_dim': feat_metadata.get('slepian_dim', 0),
@@ -934,7 +1421,8 @@ def main():
                 'L_global': args.L_global,
                 'L_slepian': args.L_slepian,
                 'cap_radius': args.cap_radius,
-                'cap_center': [0.0, 90.0],
+                'cap_center': [args.cap_center_lon, args.cap_center_lat],
+                'coverage_pct': coverage_pct,
                 'num_modes_initial': args.num_modes,
                 'lambda_thresh': args.lambda_thresh,
                 'batch_size': args.batch_size,

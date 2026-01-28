@@ -278,7 +278,7 @@ def run_experiment(
         )
 
     # Prepare coordinates (normalize for planar methods)
-    if method in ['exact_gp', 'svgp', 'planar_rff']:
+    if method in ['exact_gp', 'svgp', 'planar_rff', 'deep_rff']:
         transformer = CoordinateTransformer(coord_type='planar')
         train_x = transformer.fit_transform(train_coords)
         test_x = transformer.transform(data['test_coords'])

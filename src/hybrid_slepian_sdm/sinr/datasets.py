@@ -7,7 +7,7 @@ import torch
 import utils
 
 class LocationDataset(torch.utils.data.Dataset):
-    def __init__(self, locs, labels, classes, class_to_taxa, input_enc, device, sh_L=10, slepian_params=None):
+    def __init__(self, locs, labels, classes, class_to_taxa, input_enc, device, sh_L=10, slepian_params=None, baseline_params=None):
 
         # handle input encoding:
         self.input_enc = input_enc
@@ -38,11 +38,15 @@ class LocationDataset(torch.utils.data.Dataset):
 
         # Create encoder with both rasters and/or direct slepian data
         self.enc = utils.CoordEncoder(input_enc, raster=raster, L=sh_L,
-                                       slepian_raster=slepian_raster, slepian_data=slepian_data)
+                                       slepian_raster=slepian_raster, slepian_data=slepian_data,
+                                       baseline_params=baseline_params)
 
         # define some properties:
         self.locs = locs
         self.loc_feats = self.enc.encode(self.locs, normalize=True)
+        # Keep loc_feats on CPU for DataLoader workers (they can't access GPU tensors)
+        if self.loc_feats.is_cuda:
+            self.loc_feats = self.loc_feats.cpu()
         self.labels = labels
         self.classes = classes
         self.class_to_taxa = class_to_taxa
@@ -340,7 +344,10 @@ def get_train_data(params):
     # Pass slepian_params if using any slepian encoding (raster or direct)
     slepian_params = params if params['input_enc'] in ['slepian', 'slepian_env', 'slepian_direct', 'slepian_direct_env'] else None
 
+    # Pass baseline_params if using any baseline encoding (pe_baselines)
+    baseline_params = params if params['input_enc'].startswith('baseline_') else None
+
     ds = LocationDataset(locs, labels, classes, class_to_taxa, params['input_enc'], params['device'],
-                         sh_L=sh_L, slepian_params=slepian_params)
+                         sh_L=sh_L, slepian_params=slepian_params, baseline_params=baseline_params)
 
     return ds

@@ -1,74 +1,86 @@
 import os
+import sys
 import numpy as np
 import torch
 
 import train
 import eval
 
-train_params = {}
 
-train_params['experiment_name'] = 'slepian_l40_sh10_res' # This will be the name of the directory where results for this run are saved.
-train_params['log_frequency'] = 100
-'''
-species_set
-- Which set of species to train on.
-- Valid values: 'all', 'snt_birds'
-'''
-train_params['species_set'] = 'all'
+def run_experiment(experiment_name, input_enc, model='ResidualFCNet', sh_L=10,
+                   slepian_L_global=10, slepian_L_regional=40, hard_cap=100):
+    """Run a single experiment with given parameters."""
+    print(f"\n{'='*60}")
+    print(f"Experiment: {experiment_name}")
+    print(f"Encoding: {input_enc}, Model: {model}")
+    if input_enc == 'sh':
+        print(f"SH L={sh_L}")
+    elif input_enc == 'slepian':
+        print(f"L_global={slepian_L_global}, L_regional={slepian_L_regional}")
+    print(f"{'='*60}\n")
 
-'''
-hard_cap_num_per_class
-- Maximum number of examples per class to use for training.
-- Valid values: positive integers or -1 (indicating no cap).
-'''
-train_params['hard_cap_num_per_class'] = 100
+    train_params = {
+        'experiment_name': experiment_name,
+        'log_frequency': 100,
+        'species_set': 'all',
+        'hard_cap_num_per_class': hard_cap,
+        'num_aux_species': 0,
+        'loss': 'an_full',
+        'input_enc': input_enc,
+        'model': model,
+        'sh_L': sh_L,
+        'slepian_L_global': slepian_L_global,
+        'slepian_L_regional': slepian_L_regional,
+    }
 
-'''
-num_aux_species
-- Number of random additional species to add.
-- Valid values: Nonnegative integers. Should be zero if params['species_set'] == 'all'.
-'''
-train_params['num_aux_species'] = 0
+    train.launch_training_run(train_params)
 
-'''
-input_enc
-- Type of inputs to use for training.
-- Valid values: 'sin_cos', 'env', 'sin_cos_env', 'sh'
-'''
-train_params['input_enc'] = 'slepian'  # Change to 'sh' for spherical harmonics
-train_params['slepian_L_regional'] = 40
-train_params['model'] = 'ResidualFCNet'
-'''
-sh_L
-- Maximum degree for spherical harmonics encoding (only used when input_enc='sh')
-- Output dimension = L^2 (e.g., L=10 -> 100 features)
-'''
-train_params['sh_L'] = 10
+    for eval_type in ['snt', 'iucn']:
+        eval_params = {
+            'exp_base': './experiments',
+            'experiment_name': experiment_name,
+            'eval_type': eval_type,
+        }
+        if eval_type == 'iucn':
+            eval_params['device'] = torch.device('cpu')
+        results = eval.launch_eval_run(eval_params)
+        np.save(os.path.join('./experiments', experiment_name, f'results_{eval_type}.npy'), results)
+        print(f"{eval_type} mAP: {results.mean():.4f}")
 
-'''
-loss
-- Which loss to use for training.
-- Valid values: 'an_full', 'an_slds', 'an_ssdl', 'an_full_me', 'an_slds_me', 'an_ssdl_me'
-'''
-train_params['loss'] = 'an_full'
 
-# train:
-train.launch_training_run(train_params)
+if __name__ == "__main__":
+    if len(sys.argv) < 3:
+        print("Usage: python train_and_evaluate_models.py <experiment_name> <input_enc> [options]")
+        print("  Options: --model, --sh_L, --L_global, --L_regional, --hard_cap")
+        print("Examples:")
+        print("  python train_and_evaluate_models.py sin_cos sin_cos")
+        print("  python train_and_evaluate_models.py sh_10 sh --sh_L 10")
+        print("  python train_and_evaluate_models.py slepian_only_l40 slepian --L_global 0 --L_regional 40")
+        sys.exit(1)
 
-# evaluate:
-for eval_type in ['snt', 'iucn']:
-    eval_params = {}
-    eval_params['exp_base'] = './experiments'
-    eval_params['experiment_name'] = train_params['experiment_name']
-    eval_params['eval_type'] = eval_type
-    if eval_type == 'iucn':
-        eval_params['device'] = torch.device('cpu') # for memory reasons
-    cur_results = eval.launch_eval_run(eval_params)
-    np.save(os.path.join(eval_params['exp_base'], train_params['experiment_name'], f'results_{eval_type}.npy'), cur_results)
+    experiment_name = sys.argv[1]
+    input_enc = sys.argv[2]
 
-'''
-Note that train_params and eval_params do not contain all of the parameters of interest. Instead,
-there are default parameter sets for training and evaluation (which can be found in setup.py).
-In this script we create dictionaries of key-value pairs that are used to override the defaults
-as needed.
-'''
+    # Parse optional arguments
+    kwargs = {}
+    i = 3
+    while i < len(sys.argv):
+        if sys.argv[i] == '--model':
+            kwargs['model'] = sys.argv[i+1]
+            i += 2
+        elif sys.argv[i] == '--sh_L':
+            kwargs['sh_L'] = int(sys.argv[i+1])
+            i += 2
+        elif sys.argv[i] == '--L_global':
+            kwargs['slepian_L_global'] = int(sys.argv[i+1])
+            i += 2
+        elif sys.argv[i] == '--L_regional':
+            kwargs['slepian_L_regional'] = int(sys.argv[i+1])
+            i += 2
+        elif sys.argv[i] == '--hard_cap':
+            kwargs['hard_cap'] = int(sys.argv[i+1])
+            i += 2
+        else:
+            i += 1
+
+    run_experiment(experiment_name, input_enc, **kwargs)

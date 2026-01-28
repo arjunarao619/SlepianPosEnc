@@ -59,46 +59,6 @@ class ResidualFCNet(nn.Module):
         else:
             return x @ self.class_emb.weight[class_of_interest, :]
 
-# class LinNet(nn.Module):
-#     """
-#     3-layer MLP (no residual connections).
-#     Architecture: input -> hidden -> hidden -> hidden -> classifier
-#     """
-#     def __init__(self, num_inputs, num_classes, num_filts=256):
-#         super(LinNet, self).__init__()
-#         self.inc_bias = False
-
-#         # 3-layer feature network
-#         self.feats = nn.Sequential(
-#             nn.Linear(num_inputs, num_filts),
-#             nn.ReLU(inplace=True),
-#             nn.Dropout(),
-#             nn.Linear(num_filts, num_filts),
-#             nn.ReLU(inplace=True),
-#             nn.Dropout(),
-#             nn.Linear(num_filts, num_filts),
-#             nn.ReLU(inplace=True),
-#         )
-
-#         # Classifier (no bias, following SINR convention)
-#         self.class_emb = nn.Linear(num_filts, num_classes, bias=self.inc_bias)
-
-#     def forward(self, x, class_of_interest=None, return_feats=False):
-#         loc_emb = self.feats(x)
-#         if return_feats:
-#             return loc_emb
-#         if class_of_interest is None:
-#             class_pred = self.class_emb(loc_emb)
-#         else:
-#             class_pred = self.eval_single_class(loc_emb, class_of_interest)
-
-#         return torch.sigmoid(class_pred)
-
-#     def eval_single_class(self, x, class_of_interest):
-#         if self.inc_bias:
-#             return x @ self.class_emb.weight[class_of_interest, :] + self.class_emb.bias[class_of_interest]
-#         else:
-#             return x @ self.class_emb.weight[class_of_interest, :]
 class LinNet(nn.Module):
     def __init__(self, num_inputs, num_classes):
         super(LinNet, self).__init__()

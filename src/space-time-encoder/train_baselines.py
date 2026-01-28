@@ -131,8 +131,9 @@ def main():
     p = argparse.ArgumentParser("Train STE baselines for ACE")
     p.add_argument("--data_path", type=str, default="/scratch/local/arra4944_images/ace/")
     p.add_argument("--temporal_type", choices=["no_time","time_copy","triangle","monomial","legendre","fourier"], default="legendre")
-    p.add_argument("--use_reg", action="store_true", help="Enable regularization (matching train_ste.py)")
-    p.add_argument("--seed", type=int, default=120)
+    p.add_argument("--use_reg", action="store_true", help="Enable regularization")
+    p.add_argument("--ortho_weight", type=float, default=None, help="Override ortho weight (default: 1e-3 if --use_reg, else 0)")
+    p.add_argument("--seed", type=int, default=42)
     p.add_argument("--train_frac", type=float, default=0.01)
     p.add_argument("--val_frac",   type=float, default=0.01)
     p.add_argument("--test_frac",  type=float, default=0.01)
@@ -150,12 +151,20 @@ def main():
     os.environ.setdefault("OPENBLAS_NUM_THREADS","1")
     os.environ.setdefault("NUMEXPR_NUM_THREADS","1")
 
-    # FIX 2: Set regularization weights to match train_ste.py
-    if args.use_reg:
-        ortho_weight_final = 1e-3
-        ortho_weight_space = 1e-3
-        ortho_weight_time = 1e-3
-        time_grad_penalty = 1e-6
+    # Set regularization weights
+    if args.ortho_weight is not None:
+        # Explicit override
+        ortho_weight_final = args.ortho_weight
+        ortho_weight_space = 0.0  # Paper only regularizes final layer
+        ortho_weight_time = 0.0
+        time_grad_penalty = 0.0
+        reg_suffix = f"alpha{args.ortho_weight}"
+    elif args.use_reg:
+        # Default regularization (paper: α=1 on final layer only)
+        ortho_weight_final = 1.0
+        ortho_weight_space = 0.0
+        ortho_weight_time = 0.0
+        time_grad_penalty = 0.0
         reg_suffix = "reg"
     else:
         ortho_weight_final = 0.0
@@ -169,7 +178,7 @@ def main():
     val_dl   = DataLoader(val_ds,   batch_size=args.batch_size, num_workers=16)
     test_dl  = DataLoader(test_ds,  batch_size=args.batch_size, num_workers=16)
 
-    # FIX 3: Apply regularization to ALL components (final, space, time)
+    # Create model (paper: regularize final layer only)
     model = STEEncoder(
         spatial_L=20,
         temporal_type=args.temporal_type,
@@ -202,7 +211,7 @@ def main():
     best_path = Path(f"best_{args.temporal_type}_{reg_suffix}_seed{args.seed}.pt")
     patience_counter = 0
     
-    print(f"Training {args.temporal_type} ({'WITH' if args.use_reg else 'WITHOUT'} regularization)")
+    print(f"Training {args.temporal_type} (α={ortho_weight_final})")
     print(f"Checkpoint: {best_path}")
     
     for epoch in range(args.max_epochs):
