@@ -43,9 +43,8 @@ def get_f2(u):
         return 0.5
     numerator = integrate.quad(f1, -1, u)[0]
 
-    # denominator is erf
-    erf = 0.4440
-    denominator = erf
+    # Normalization constant from integral of f1 over [-1, 1]
+    denominator = 0.4440
     return numerator / denominator
 
 def get_Nside(B, j):

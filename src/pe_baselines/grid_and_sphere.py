@@ -9,7 +9,7 @@ class GridAndSphere(nn.Module):
                  max_radius=0.01, min_radius=0.00001,
                  freq_init="geometric", name="grid"):
         super(GridAndSphere, self).__init__()
-        # rename for variants
+        # Set class name based on variant for cleaner repr
         if name == "grid":
             GridAndSphere.__qualname__ = "Grid"; GridAndSphere.__name__ = "Grid"
         elif name == "spherec":
@@ -55,16 +55,16 @@ class GridAndSphere(nn.Module):
         device, dtype = coords.device, coords.dtype
         N = coords.size(0)
 
-        # convert degrees -> radians for trigs
+        # Convert to radians for trig functions
         coords_rad = torch.deg2rad(coords)
         coords_np = coords_rad.detach().cpu().numpy()
 
-        # Add dummy context dim to match original shapes
-        coords_mat = np.expand_dims(coords_np[:, None, :], axis=3)   # (N,1,2,1)
-        coords_mat = np.expand_dims(coords_mat, axis=4)              # (N,1,2,1,1)
-        coords_mat = np.repeat(coords_mat, self.frequency_num, axis=3)  # (N,1,2,S,1)
-        coords_mat = np.repeat(coords_mat, 2, axis=4)                   # (N,1,2,S,2)
-        spr_embeds = coords_mat * self.freq_mat                         # (N,1,2,S,2)
+        # Expand dims for broadcasting with frequency matrix
+        coords_mat = np.expand_dims(coords_np[:, None, :], axis=3)
+        coords_mat = np.expand_dims(coords_mat, axis=4)
+        coords_mat = np.repeat(coords_mat, self.frequency_num, axis=3)
+        coords_mat = np.repeat(coords_mat, 2, axis=4)
+        spr_embeds = coords_mat * self.freq_mat
 
         if self.name == "grid":
             spr_embeds[:, :, :, :, 0::2] = np.sin(spr_embeds[:, :, :, :, 0::2])

@@ -7,6 +7,6 @@ class Direct(BaseLocationEncoder):
         self.embedding_dim = 2
     
     def forward(self, coords):
-        # Convert to radians and shift to [-π, π] range
+        # Map degrees to radians and center around zero
         coords = torch.deg2rad(coords) - torch.pi
         return coords

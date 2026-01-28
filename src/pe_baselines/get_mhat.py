@@ -44,11 +44,10 @@ def r_func(theta):
 
 
 def spherical_wavelet_proj(theta, phi, k, scale_factor=1, wavelet_type='gabor'):
-    '''
-    TODO:
-    Implement/try the three wavelets explored in:
-    https://arxiv.org/pdf/astro-ph/0506308 (pg 4)
-    '''
+    """
+    Compute spherical wavelet projection for a given wavelet type.
+    See arxiv astro-ph/0506308 for background on spherical wavelets.
+    """
     if wavelet_type == 'gabor':
         # Original Gabor directional wavelet
         scalar_factor = np.exp(-0.5 * np.tan(theta / 2)**2 / (scale_factor ** 2)) / (1 + np.cos(theta))
@@ -73,7 +72,7 @@ def spherical_wavelet_proj(theta, phi, k, scale_factor=1, wavelet_type='gabor'):
 
 def spherical_wavelet_family(theta, phi, dil_a, rot_rho, k, scale_factor=1, wavelet_type='butterfly'):
     alpha, beta, gamma = rot_rho
-    # FIX FOR GPU TRAINING
+    # Handle GPU tensors by moving to CPU for numpy operations
     if not torch.cuda.is_available():
         theta, phi = theta[:, 0].numpy(), phi[:, 0].numpy()
     else:
@@ -83,9 +82,7 @@ def spherical_wavelet_family(theta, phi, dil_a, rot_rho, k, scale_factor=1, wave
     dil_constant = (2 * dil_a) / ((dil_a**2 - 1) * np.cos(theta) + (dil_a**2) + 1)
     inv_theta, inv_phi = 2 * np.arctan2(np.tan(theta / 2), dil_a), phi
     
-    wavelet = torch.tensor(dil_constant * spherical_wavelet_proj(inv_theta, inv_phi, 
+    wavelet = torch.tensor(dil_constant * spherical_wavelet_proj(inv_theta, inv_phi,
                                                                  k=k, scale_factor=scale_factor, wavelet_type=wavelet_type))
-    # if torch.cuda.is_available():
-    #   wavelet = wavelet.cuda()
     return wavelet
 

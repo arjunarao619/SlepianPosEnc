@@ -3,18 +3,14 @@ from .get_psi_helper import *
 import scipy.io
 
 
-'''
-The following is an implementation of extracting spherical needlet bases,
-verified using available Matlab repo.
-https://arxiv.org/abs/1508.05406 
+"""
+Spherical needlet basis extraction.
+Reference: arxiv 1508.05406
 
-Note: pix2ang relies on a grid discretization not available on Windows. To use
-the script for higher k, run the Matlab code and save the files in ~/root/pix2ang_data
-'''
+The pix2ang data files are precomputed from HEALPix and stored in pix2ang_data/.
+For higher resolution grids, regenerate these using the MATLAB scripts.
+"""
 def get_psi(B, j, k, theta, phi):
-    #import pdb
-    #pdb.set_trace()
-
     j_max = j
     l_max = int(np.floor(B ** (j_max + 1)))
 
@@ -28,7 +24,7 @@ def get_psi(B, j, k, theta, phi):
     tp = np.ravel(np.array(mat_contents))
     theta_xi, phi_xi = tp[k-1][0], tp[k-1][1]
 
-    # LON LAT CONFUSION HERE
+    # Convert from colatitude to latitude convention
     theta_xi = np.pi/2 - theta_xi
 
     x_xi, y_xi, z_xi = sph2cart(phi_xi, theta_xi, 1)

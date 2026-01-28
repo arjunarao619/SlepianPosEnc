@@ -25,21 +25,21 @@ class Grid(BaseLocationEncoder):
         coords_rad = torch.deg2rad(coords)
         coords_np = coords_rad.cpu().numpy()
         
-        # Expand dimensions for broadcasting
-        coords_mat = np.expand_dims(coords_np, axis=2)  # [batch, 2, 1]
-        coords_mat = np.expand_dims(coords_mat, axis=3)  # [batch, 2, 1, 1]
-        coords_mat = np.repeat(coords_mat, self.frequency_num, axis=2)  # [batch, 2, freq_num, 1]
-        coords_mat = np.repeat(coords_mat, 2, axis=3)  # [batch, 2, freq_num, 2]
+        # Expand dimensions for broadcasting with frequency matrix
+        coords_mat = np.expand_dims(coords_np, axis=2)
+        coords_mat = np.expand_dims(coords_mat, axis=3)
+        coords_mat = np.repeat(coords_mat, self.frequency_num, axis=2)
+        coords_mat = np.repeat(coords_mat, 2, axis=3)
         
         # Apply frequencies
         spr_embeds = coords_mat * self.freq_mat
         
-        # Apply sin and cos
-        spr_embeds[:, :, :, 0::2] = np.sin(spr_embeds[:, :, :, 0::2])  # sin
-        spr_embeds[:, :, :, 1::2] = np.cos(spr_embeds[:, :, :, 1::2])  # cos
-        
-        # Reshape to [batch, 4*frequency_num]
-        spr_embeds = spr_embeds.transpose(0, 2, 1, 3)  # [batch, freq_num, 2, 2]
+        # Interleave sin and cos for each frequency
+        spr_embeds[:, :, :, 0::2] = np.sin(spr_embeds[:, :, :, 0::2])
+        spr_embeds[:, :, :, 1::2] = np.cos(spr_embeds[:, :, :, 1::2])
+
+        # Flatten to feature vector
+        spr_embeds = spr_embeds.transpose(0, 2, 1, 3)
         spr_embeds = spr_embeds.reshape(batch_size, -1)
         
         return torch.from_numpy(spr_embeds).to(dtype).to(device)

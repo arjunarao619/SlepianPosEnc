@@ -7,7 +7,7 @@ class Wrap(BaseLocationEncoder):
         self.embedding_dim = 4
     
     def forward(self, coords):
-        # coords: [batch, 2] with (longitude, latitude) in degrees
+        # Input is lon/lat in degrees
         coords_rad = torch.deg2rad(coords)
         lon = coords_rad[:, 0]
         lat = coords_rad[:, 1]

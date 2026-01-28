@@ -59,8 +59,8 @@ class Theory(BaseLocationEncoder):
         # Reshape
         spr_embeds = angle_mat.reshape(batch_size, -1)
         
-        # Apply sin and cos alternately
-        spr_embeds[:, 0::2] = np.sin(spr_embeds[:, 0::2])  # sin for even indices
-        spr_embeds[:, 1::2] = np.cos(spr_embeds[:, 1::2])  # cos for odd indices
+        # Interleave sin and cos
+        spr_embeds[:, 0::2] = np.sin(spr_embeds[:, 0::2])
+        spr_embeds[:, 1::2] = np.cos(spr_embeds[:, 1::2])
         
         return torch.from_numpy(spr_embeds).to(dtype).to(device)

@@ -7,7 +7,7 @@ class Cartesian3D(BaseLocationEncoder):
         self.embedding_dim = 3
     
     def forward(self, coords):
-        # coords: [batch, 2] with (longitude, latitude) in degrees
+        # Input is lon/lat in degrees
         coords_rad = torch.deg2rad(coords)
         lon = coords_rad[:, 0]
         lat = coords_rad[:, 1]
@@ -17,7 +17,7 @@ class Cartesian3D(BaseLocationEncoder):
         cos_lat = torch.cos(lat)
         sin_lat = torch.sin(lat)
         
-        # Convert to 3D Cartesian
+        # Standard spherical to Cartesian conversion
         x = cos_lat * cos_lon
         y = cos_lat * sin_lon
         z = sin_lat

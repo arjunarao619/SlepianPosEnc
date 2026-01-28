@@ -15,13 +15,13 @@ from .get_mhat import spherical_wavelet_family
 def fibonacci_sphere(num_points):
     """Generate evenly distributed points on a sphere using Fibonacci spiral."""
     points = []
-    phi = np.pi * (3. - np.sqrt(5.))  # golden angle in radians
+    phi = np.pi * (3. - np.sqrt(5.))
 
     for i in range(num_points):
-        y = 1 - (i / float(num_points - 1)) * 2  # y goes from 1 to -1
-        radius = np.sqrt(1 - y * y)  # radius at y
+        y = 1 - (i / float(num_points - 1)) * 2
+        radius = np.sqrt(1 - y * y)
 
-        theta = phi * i  # golden angle increment
+        theta = phi * i
 
         x = np.cos(theta) * radius
         z = np.sin(theta) * radius
@@ -32,13 +32,13 @@ def fibonacci_sphere(num_points):
 
 
 def cartesian_to_euler(x, y, z):
-    """Convert Cartesian coordinates to Euler angles."""
+    """Convert Cartesian coordinates to Euler angles for wavelet rotation."""
     r = np.sqrt(x**2 + y**2 + z**2)
-    theta = np.arccos(z / r)  # inclination angle (from z-axis down)
-    phi = np.arctan2(y, x)    # azimuthal angle (in x-y plane from x-axis)
-    psi = phi          # yaw (rotation around z-axis)
-    theta = theta      # pitch (rotation around y-axis)
-    phi = 0            # roll (rotation around x-axis, set to 0)
+    theta = np.arccos(z / r)
+    phi = np.arctan2(y, x)
+    psi = phi
+    theta = theta
+    phi = 0
 
     return np.degrees(psi), np.degrees(theta), np.degrees(phi)
 
@@ -126,7 +126,6 @@ class Wavelets(BaseLocationEncoder):
                 beta = math.radians(beta_deg)
                 gamma = math.radians(gamma_deg)
 
-                # Compute wavelet response at this scale and rotation
                 w = spherical_wavelet_family(
                     theta, phi,
                     dil_a=dil_a,
@@ -138,7 +137,6 @@ class Wavelets(BaseLocationEncoder):
 
                 Y.append(w)
 
-        # Stack into [B, n_features]
         Y = torch.stack(Y, dim=-1)
         Y = Y.to(dtype=lonlat.dtype, device=lonlat.device)
 
