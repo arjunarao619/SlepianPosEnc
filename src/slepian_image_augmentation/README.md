@@ -28,6 +28,14 @@ Edit `scripts/prepare_data.sh` to set your Earth Engine project ID:
 EE_PROJECT="your-ee-project"  # Your Earth Engine project ID
 ```
 
+### 3. Initialize Galileo Submodule (optional)
+
+Only required if using Galileo embeddings (`--embedding-type galileo`). Skip this if using AlphaEarth embeddings only.
+
+```bash
+git submodule update --init --recursive
+```
+
 ## Usage
 
 ### Step 1: Prepare Data
@@ -105,7 +113,7 @@ slepian_image_augmentation/
 ├── merge_galileo_embeddings.py
 ├── prep_multiscale_targets.py
 ├── train_slepian_vs_sh_multiscale_v3.py
-└── galileo/
+└── galileo/                            # Submodule (github.com/nasaharvest/galileo)
 ```
 
 ## Customization
