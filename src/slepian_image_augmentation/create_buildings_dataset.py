@@ -726,9 +726,8 @@ def parse_args():
                        help='Disable WandB logging')
     parser.add_argument('--wandb-project', default='buildings_alphaearth',
                        help='WandB project name')
-    parser.add_argument('--ee-project', type=str, 
-                   default='sentinel-downloader-468517',  # Changed from default=None
-                   help='Google Earth Engine project ID')
+    parser.add_argument('--ee-project', type=str, required=True,
+                   help='Google Earth Engine project ID (required)')
     
     return parser.parse_args()
 

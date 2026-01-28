@@ -4,7 +4,7 @@ Merge Galileo embeddings into the original grid parquet files.
 This adds the galileo_embedding column to {region}_grid.parquet.
 
 Usage:
-    python merge_galileo_embeddings.py --data-dir /scratch/local/arra4944_images/openbuildings
+    python merge_galileo_embeddings.py --data-dir $DATA_DIR
 """
 
 import argparse

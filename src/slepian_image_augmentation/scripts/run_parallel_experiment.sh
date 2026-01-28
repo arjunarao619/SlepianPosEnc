@@ -27,7 +27,7 @@ set -e
 # =============================================================================
 # CONFIGURATION
 # =============================================================================
-SCRIPT_DIR="/projects/arra4944/SlepianPosEnc/src/slepian_image_augmentation"
+SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 REGIONS="southflorida dhaka maharashtra mexicocity"
 EMBEDDINGS="alphaearth galileo"
 L_SH_VALUES="10 40"

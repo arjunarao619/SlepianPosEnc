@@ -6,11 +6,11 @@ Downloads S2 median composites for building density grid cells.
 Includes checkpointing, progress tracking, and periodic visualizations.
 
 Usage:
-    python download_s2_for_galileo.py \
-        --data-dir /scratch/local/arra4944_images/openbuildings \
+    python sentinel2_openbuildings_download.py \
+        --data-dir $DATA_DIR \
         --regions mexicocity dhaka maharashtra southflorida \
-        --output-dir /scratch/local/arra4944_images/s2_patches \
-        --ee-project sentinel-downloader-468517
+        --output-dir $DATA_DIR/s2_patches \
+        --ee-project $EE_PROJECT
 """
 
 import os

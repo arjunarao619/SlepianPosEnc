@@ -5,7 +5,7 @@ Generate Galileo Embeddings for All OpenBuildings Regions
 Processes all S2 patches and adds galileo_embedding column to parquet files.
 
 Usage:
-    python generate_galileo_all_regions.py --data-dir /scratch/local/arra4944_images/openbuildings
+    python generate_galileo_all_regions.py --data-dir $DATA_DIR
 """
 
 import argparse

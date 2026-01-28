@@ -29,13 +29,13 @@ from scipy.ndimage import gaussian_filter
 try:
     from spherical_harmonics_ylm import SH as SH_analytic
     HAVE_SH = True
-except:
+except ImportError:
     HAVE_SH = False
 
 try:
     import pyshtools as pysh
     HAVE_PYSH = True
-except:
+except ImportError:
     HAVE_PYSH = False
 
 os.environ.setdefault("OMP_NUM_THREADS", "2")

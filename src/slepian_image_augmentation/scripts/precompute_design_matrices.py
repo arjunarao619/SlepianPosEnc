@@ -5,8 +5,8 @@ This saves significant time when running many experiments with different K value
 
 Usage:
     python scripts/precompute_design_matrices.py \
-        --data-dir /scratch/local/arra4944_images/openbuildings \
-        --output-dir /scratch/local/arra4944_images/openbuildings/design_matrices
+        --data-dir $DATA_DIR \
+        --output-dir $DATA_DIR/design_matrices
 """
 
 import argparse
@@ -30,7 +30,7 @@ from spherical_harmonics_ylm import SH as SH_analytic
 try:
     import pyshtools as pysh
     HAVE_PYSH = True
-except:
+except ImportError:
     HAVE_PYSH = False
 
 # Suppress BLAS threading

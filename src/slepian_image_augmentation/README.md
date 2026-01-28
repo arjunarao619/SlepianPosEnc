@@ -21,20 +21,11 @@ Compares Slepian vs Spherical Harmonic positional encodings for augmenting satel
 2. Download CSV files for your regions of interest
 3. Name files by region: `southflorida.csv`, `dhaka.csv`, `maharashtra.csv`, `mexicocity.csv`
 
-### 2. Configure Paths
+### 2. Configure Earth Engine
 
-Edit both scripts to set your environment:
-
-**`scripts/prepare_data.sh`** (lines 33-36):
+Edit `scripts/prepare_data.sh` to set your Earth Engine project ID:
 ```bash
-SCRIPT_DIR="/path/to/slepian_image_augmentation"
-REGIONS="southflorida dhaka maharashtra mexicocity"  # Must match your CSV filenames
 EE_PROJECT="your-ee-project"  # Your Earth Engine project ID
-```
-
-**`scripts/run_parallel_experiment.sh`** (line 30):
-```bash
-SCRIPT_DIR="/path/to/slepian_image_augmentation"
 ```
 
 ## Usage
@@ -90,7 +81,6 @@ This runs 48 experiments in parallel:
 
 Results saved to `<data_dir>/results/`:
 - `*.csv` - Per-experiment metrics (R², RMSE per smoothing scale)
-- `tikz_coordinates.tex` - LaTeX figure code
 
 CSV columns:
 | Column | Description |
@@ -108,9 +98,7 @@ slepian_image_augmentation/
 ├── scripts/
 │   ├── prepare_data.sh              # Data pipeline
 │   ├── run_parallel_experiment.sh   # Training pipeline
-│   ├── precompute_design_matrices.py
-│   ├── aggregate_results_to_tikz.py
-│   └── generate_camera_ready_figure.py
+│   └── precompute_design_matrices.py
 ├── create_buildings_dataset.py
 ├── sentinel2_openbuildings_download.py
 ├── generate_galileo_all_regions.py
@@ -126,7 +114,7 @@ Edit `scripts/run_parallel_experiment.sh` to change:
 ```bash
 REGIONS="..."           # Regions to process
 L_SH_VALUES="10 40"     # SH maximum degrees
-L_SLEPIAN_VALUES="40 64 96"  # Slepian maximum degrees
+L_SLEPIAN_VALUES="40 80 120"  # Slepian maximum degrees
 SEED=123                # Random seed
 MAX_PARALLEL_JOBS=30    # Parallelism
 ```

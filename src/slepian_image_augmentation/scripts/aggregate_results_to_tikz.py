@@ -3,7 +3,7 @@
 Aggregate experiment results and generate TikZ coordinate strings.
 
 Usage:
-    python scripts/aggregate_results_to_tikz.py --results-dir /scratch/local/arra4944_images/openbuildings/results
+    python scripts/aggregate_results_to_tikz.py --results-dir $DATA_DIR/results
 """
 
 import argparse

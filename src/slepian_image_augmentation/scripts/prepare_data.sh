@@ -30,7 +30,7 @@ set -e
 # =============================================================================
 # CONFIGURATION
 # =============================================================================
-SCRIPT_DIR="/projects/arra4944/SlepianPosEnc/src/slepian_image_augmentation"
+SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 REGIONS="southflorida dhaka maharashtra mexicocity"
 EE_PROJECT="sentinel-downloader-468517"
 SAMPLES_PER_REGION=30000
