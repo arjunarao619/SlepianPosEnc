@@ -5,24 +5,30 @@ Reports per-variable RMSE and MAE for all 8 air temperature levels.
 
 Usage:
     cd /projects/arra4944/SlepianPosEnc/src/space-time-encoder
-    python test_ace.py [--test_frac 0.01] [--seed 0]
+    python test_ace.py [--test_frac 0.01] [--split_seed 0]
 """
 
-import os, sys, math, re, argparse, csv
+import os
+import sys
+import math
+import re
+import argparse
+import csv
 from pathlib import Path
+from collections import defaultdict
 import numpy as np
 import torch
-from torch.utils.data import DataLoader, TensorDataset
-import netCDF4
+from torch.utils.data import DataLoader
 
 from models.ste_encoder import STEEncoder
-from utils.data_utils import DataNormalizer
+from utils.ace_data import prepare_ace_data
 
-# ── constants ──────────────────────────────────────────────────────────
+
+# Constants
 DATA_PATH = "/scratch/local/arra4944_images/ace/"
 BASELINE_DIR = Path(__file__).resolve().parent / "checkpoints_baselines"
-DPSS_DIR     = Path(__file__).resolve().parent / "checkpoints"
-OUTPUT_CSV   = Path(__file__).resolve().parent / "test_results.csv"
+DPSS_DIR = Path(__file__).resolve().parent / "checkpoints"
+OUTPUT_CSV = Path(__file__).resolve().parent / "test_results.csv"
 
 VAR_NAMES = [
     "T0 (~26hPa)",
@@ -35,73 +41,38 @@ VAR_NAMES = [
     "T7 (~964hPa)",
 ]
 
-# ── data loading ───────────────────────────────────────────────────────
-def load_ace_month(fp):
-    with netCDF4.Dataset(fp, 'r') as nc:
-        lons  = nc.variables['grid_xt'][:] - 180
-        lats  = nc.variables['grid_yt'][:]
-        times = nc.variables['time'][:]
-        temps = np.stack([nc.variables[f'air_temperature_{i}'][:] for i in range(8)], axis=-1)
-        lon_g, lat_g, time_g = np.meshgrid(lons, lats, times, indexing='ij')
-        coords  = np.stack([lon_g.flatten(), lat_g.flatten(), time_g.flatten()], axis=1).astype(np.float32)
-        targets = temps.transpose(2, 1, 0, 3).reshape(-1, 8).astype(np.float32)
-    return coords, targets
 
-
-def prepare_ace(data_path, train_frac, test_frac, split_seed=0):
-    Cs, Ys = [], []
-    for m in range(1, 13):
-        fp = os.path.join(data_path, f"2021{m:02d}0100.nc")
-        if os.path.exists(fp):
-            c, y = load_ace_month(fp)
-            Cs.append(c); Ys.append(y)
-    coords  = torch.from_numpy(np.concatenate(Cs, 0))
-    targets = torch.from_numpy(np.concatenate(Ys, 0))
-
-    # normalize time to [-1, 1]
-    tmin, tmax = coords[:, 2].min(), coords[:, 2].max()
-    coords[:, 2] = 2 * (coords[:, 2] - tmin) / (tmax - tmin) - 1
-
-    N = coords.shape[0]
-    n_tr = int(N * train_frac)
-    n_te = int(N * test_frac)
-
-    gen = torch.Generator().manual_seed(split_seed)
-    perm = torch.randperm(N, generator=gen)
-    tr = perm[:n_tr]
-    te = perm[n_tr:n_tr + n_te]
-
-    normalizer = DataNormalizer()
-    normalizer.fit(targets[tr])
-    targets_norm = normalizer.transform(targets)
-
-    test_ds = TensorDataset(coords[te], targets_norm[te], targets[te])
-    return test_ds, normalizer
-
-
-# ── architecture inference ─────────────────────────────────────────────
 def parse_basis_from_name(name):
+    """Parse temporal basis type from checkpoint filename."""
     n = name.lower()
-    if "dpss"      in n: return "dpss"
-    if "no_time"   in n: return "no_time"
-    if "time_copy" in n: return "time_copy"
-    if "fourier"   in n: return "fourier"
-    if "legendre"  in n: return "legendre"
-    if "monomial"  in n: return "monomial"
-    if "triangle"  in n: return "triangle"
+    if "dpss" in n:
+        return "dpss"
+    if "no_time" in n:
+        return "no_time"
+    if "time_copy" in n:
+        return "time_copy"
+    if "fourier" in n:
+        return "fourier"
+    if "legendre" in n:
+        return "legendre"
+    if "monomial" in n:
+        return "monomial"
+    if "triangle" in n:
+        return "triangle"
     return None
 
 
 def infer_arch_from_state_dict(sd):
+    """Infer model architecture from state dict keys and shapes."""
     info = {}
     is_dpss = "temporal_encoder.dpss_base.dpss_seqs" in sd
     info["model"] = "dpss" if is_dpss else "ste"
 
-    W_space0    = sd["space_mlp.feats.0.weight"]
-    proj_dim    = int(W_space0.shape[0])
+    W_space0 = sd["space_mlp.feats.0.weight"]
+    proj_dim = int(W_space0.shape[0])
     spatial_dim = int(W_space0.shape[1])
-    L_guess     = int(round(math.sqrt(spatial_dim)))
-    spatial_L   = L_guess if L_guess * L_guess == spatial_dim else 20
+    L_guess = int(round(math.sqrt(spatial_dim)))
+    spatial_L = L_guess if L_guess * L_guess == spatial_dim else 20
     info.update(dict(projection_dim=proj_dim, spatial_dim=spatial_dim, spatial_L=spatial_L))
 
     W_head0 = sd["head.feats.0.weight"]
@@ -113,7 +84,7 @@ def infer_arch_from_state_dict(sd):
     if is_dpss:
         dpss_base = sd["temporal_encoder.dpss_base.dpss_seqs"]
         K_dpss, N = int(dpss_base.shape[0]), int(dpss_base.shape[1])
-        has_proj  = "temporal_encoder.projection.weight" in sd
+        has_proj = "temporal_encoder.projection.weight" in sd
         info["dpss_optimized"] = bool(has_proj)
         if has_proj:
             K_out = int(sd["temporal_encoder.projection.weight"].shape[0])
@@ -129,7 +100,7 @@ def infer_arch_from_state_dict(sd):
         else:
             info.update(dict(has_time=False, temporal_dim=0, dpss_optimized=False))
 
-    # combination
+    # Combination mode
     if combined_dim == 2 * proj_dim and info.get("has_time", False):
         combo = "concatenate"
     elif combined_dim == proj_dim and not info.get("has_time", True):
@@ -137,24 +108,26 @@ def infer_arch_from_state_dict(sd):
     elif combined_dim == proj_dim and info.get("has_time", False):
         combo = "hadamard"
     else:
-        combo = "concatenate"  # safe default
+        combo = "concatenate"
     info["combination"] = combo
 
-    # count residual blocks
+    # Count residual blocks
     res_indices = set()
     for k in sd:
         if k.startswith("head.feats.") and k.endswith(".w1.weight"):
             parts = k.split(".")
             if len(parts) >= 4:
-                try: res_indices.add(int(parts[2]))
-                except ValueError: pass
+                try:
+                    res_indices.add(int(parts[2]))
+                except ValueError:
+                    pass
     info.update(dict(hidden_dim=hidden_dim, combined_dim=combined_dim,
                      output_dim=output_dim, num_layers=len(res_indices)))
     return info
 
 
-# ── model building ─────────────────────────────────────────────────────
 def build_model(basis, info, device):
+    """Build model from inferred architecture info."""
     spatial_L = info.get("spatial_L", 20)
     if basis == "dpss":
         model = STEEncoder(
@@ -178,14 +151,14 @@ def build_model(basis, info, device):
     return model.to(device)
 
 
-# ── evaluation ─────────────────────────────────────────────────────────
 @torch.no_grad()
 def evaluate_per_var(model, dl, device, normalizer):
-    """Returns (rmse_list, mae_list) each of length 8."""
+    """Evaluate model and return per-variable RMSE and MAE."""
     model.eval()
     P, T = [], []
-    for x, y_norm, y_raw in dl:
-        x = x.to(device, non_blocking=True)
+    for batch in dl:
+        x = batch[0].to(device, non_blocking=True)
+        y_raw = batch[2]  # Raw unnormalized targets
         p_norm = model(x)
         P.append(normalizer.inverse_transform(p_norm.cpu()))
         T.append(y_raw)
@@ -198,12 +171,11 @@ def evaluate_per_var(model, dl, device, normalizer):
     return rmse, mae
 
 
-# ── checkpoint discovery ───────────────────────────────────────────────
 def discover_checkpoints():
-    """Return list of (label, basis, seed_str, path)."""
+    """Return list of (label, basis, seed_str, path) for all checkpoints."""
     ckpts = []
 
-    # baselines: noreg only
+    # Baselines: noreg only
     if BASELINE_DIR.exists():
         for p in sorted(BASELINE_DIR.glob("best_*_noreg_seed*.pt")):
             basis = parse_basis_from_name(p.stem)
@@ -216,10 +188,10 @@ def discover_checkpoints():
     if DPSS_DIR.exists():
         for p in sorted(DPSS_DIR.glob("best_dpss_NW*_K*_opt_seed*.pt")):
             m_nw = re.search(r"NW(\d+)", p.stem)
-            m_k  = re.search(r"K(\d+)", p.stem)
+            m_k = re.search(r"K(\d+)", p.stem)
             m_sd = re.search(r"seed(\d+)", p.stem)
-            nw   = m_nw.group(1) if m_nw else "?"
-            k    = m_k.group(1) if m_k else "?"
+            nw = m_nw.group(1) if m_nw else "?"
+            k = m_k.group(1) if m_k else "?"
             seed_str = m_sd.group(1) if m_sd else "?"
             label = f"dpss_NW{nw}_K{k}"
             ckpts.append((label, "dpss", seed_str, p))
@@ -227,15 +199,14 @@ def discover_checkpoints():
     return ckpts
 
 
-# ── main ───────────────────────────────────────────────────────────────
 def parse_args():
     p = argparse.ArgumentParser(description="Batch test all noreg baselines + DPSS on ACE")
-    p.add_argument("--data_path",  type=str, default=DATA_PATH)
+    p.add_argument("--data_path", type=str, default=DATA_PATH)
     p.add_argument("--train_frac", type=float, default=0.01)
-    p.add_argument("--test_frac",  type=float, default=0.01)
+    p.add_argument("--test_frac", type=float, default=0.01)
     p.add_argument("--split_seed", type=int, default=0, help="RNG seed for train/test split")
     p.add_argument("--batch_size", type=int, default=40000)
-    p.add_argument("--device",     type=str, default="cuda" if torch.cuda.is_available() else "cpu")
+    p.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
     p.add_argument("--output_csv", type=str, default=str(OUTPUT_CSV))
     return p.parse_args()
 
@@ -245,27 +216,35 @@ def main():
     device = args.device
     torch.set_float32_matmul_precision("high")
 
-    # ── Load data once ──
+    # Load data (with raw targets for evaluation)
     print("Loading ACE data...")
-    test_ds, normalizer = prepare_ace(args.data_path, args.train_frac, args.test_frac, args.split_seed)
+    train_ds, val_ds, test_ds, normalizer = prepare_ace_data(
+        args.data_path,
+        args.train_frac,
+        0.01,  # val_frac not used
+        args.test_frac,
+        seed=args.split_seed,
+        include_raw_targets=True,
+        verbose=True
+    )
     test_loader = DataLoader(test_ds, batch_size=args.batch_size, shuffle=False,
                              num_workers=2, pin_memory=True)
     print(f"Test set: {len(test_ds)} samples\n")
 
-    # ── Discover checkpoints ──
+    # Discover checkpoints
     ckpts = discover_checkpoints()
     if not ckpts:
         print("ERROR: No checkpoints found.")
         sys.exit(1)
     print(f"Found {len(ckpts)} checkpoints\n")
 
-    # ── Header ──
+    # Header
     var_hdr = "  ".join(f"{v:>12s}" for v in VAR_NAMES)
     sep = "-" * 160
     print(f"{'Model':<25s} {'Seed':>4s}  {var_hdr}  {'Mean RMSE':>10s}")
     print(sep)
 
-    rows = []  # for CSV
+    rows = []
 
     for label, basis, seed_str, ckpt_path in ckpts:
         try:
@@ -280,9 +259,9 @@ def main():
 
             rmse, mae = evaluate_per_var(model, test_loader, device, normalizer)
             mean_rmse = float(np.mean(rmse))
-            mean_mae  = float(np.mean(mae))
+            mean_mae = float(np.mean(mae))
 
-            # print RMSE row
+            # Print RMSE row
             vals = "  ".join(f"{r:12.4f}" for r in rmse)
             print(f"{label:<25s} {seed_str:>4s}  {vals}  {mean_rmse:10.4f}")
 
@@ -295,25 +274,26 @@ def main():
             ))
 
             del model
-            torch.cuda.empty_cache() if device == "cuda" else None
+            if device == "cuda":
+                torch.cuda.empty_cache()
 
         except Exception as e:
             print(f"{label:<25s} {seed_str:>4s}  ERROR: {e}")
 
-    # ── Summary: mean ± std across seeds per baseline type ──
+    # Summary: mean +/- std across seeds per baseline type
     print(f"\n{'='*160}")
-    print("Summary (mean ± std RMSE across seeds)")
+    print("Summary (mean +/- std RMSE across seeds)")
     print(f"{'='*160}")
 
-    from collections import defaultdict
     groups = defaultdict(list)
     for r in rows:
         groups[r["model"]].append(r)
 
     print(f"{'Model':<25s}  {var_hdr}  {'Mean RMSE':>10s}")
     print(sep)
+
     summary_rows = []
-    for model_name in dict.fromkeys(r["model"] for r in rows):  # preserve order
+    for model_name in dict.fromkeys(r["model"] for r in rows):
         group = groups[model_name]
         if len(group) == 1:
             r = group[0]
@@ -326,11 +306,11 @@ def main():
             ))
         else:
             means = [np.mean([g[f"rmse_{VAR_NAMES[i]}"] for g in group]) for i in range(8)]
-            stds  = [np.std([g[f"rmse_{VAR_NAMES[i]}"]  for g in group]) for i in range(8)]
+            stds = [np.std([g[f"rmse_{VAR_NAMES[i]}"] for g in group]) for i in range(8)]
             overall_mean = np.mean([g["mean_rmse"] for g in group])
-            overall_std  = np.std([g["mean_rmse"] for g in group])
-            vals = "  ".join(f"{m:6.3f}±{s:4.3f}" for m, s in zip(means, stds))
-            print(f"{model_name:<25s}  {vals}  {overall_mean:5.3f}±{overall_std:4.3f}")
+            overall_std = np.std([g["mean_rmse"] for g in group])
+            vals = "  ".join(f"{m:6.3f}+/-{s:4.3f}" for m, s in zip(means, stds))
+            print(f"{model_name:<25s}  {vals}  {overall_mean:5.3f}+/-{overall_std:4.3f}")
             summary_rows.append(dict(
                 model=model_name, n_seeds=len(group),
                 **{f"rmse_{VAR_NAMES[i]}": means[i] for i in range(8)},
@@ -338,7 +318,7 @@ def main():
                 mean_rmse=overall_mean, mean_rmse_std=overall_std,
             ))
 
-    # ── Save CSV (per-seed rows) ──
+    # Save CSV
     csv_path = Path(args.output_csv)
     fieldnames = ["model", "basis", "seed"]
     for v in VAR_NAMES:

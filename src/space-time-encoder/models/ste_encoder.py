@@ -6,25 +6,27 @@ from .baseline_time import time_embedding_functions
 from .sphericalharmonics import SphericalHarmonics
 
 class STEEncoder(nn.Module):
-    """
-    Space-Time Encoder supporting baselines: 'no_time', 'time_copy', 'triangle', 'monomial',
-    and orthogonal families: 'legendre', 'fourier'. Also supports 'dpss' via dpss_time.py.
+    """Space-Time Encoder combining spherical harmonics (spatial) with temporal encodings.
 
-    ACE defaults per paper: L=20 (400 spatial dims), temporal_dim=40, combine='concatenate',
-    FC head=4 residual blocks @ 1024 hidden (Table 2 / Impl. details). :contentReference[oaicite:7]{index=7}
+    Args:
+        spatial_L: Spherical harmonics degree (output dim = L^2)
+        temporal_type: 'dpss', 'legendre', 'fourier', 'triangle', 'monomial', 'time_copy', 'no_time'
+        temporal_dim: Number of temporal basis functions
+        combination: How to combine spatial/temporal ('concatenate', 'outer_product', 'hadamard')
+        hidden_dim, num_layers, output_dim: FCNet head configuration
+        ortho_weight_*: Regularization weights for orthogonality constraints
     """
     def __init__(self,
                  spatial_L=20,
-                 temporal_type='legendre',      # 'no_time'|'time_copy'|'triangle'|'monomial'|'legendre'|'fourier'|'dpss'
+                 temporal_type='legendre',
                  temporal_dim=40,
-                 combination='concatenate',     # 'concatenate' | 'outer_product' | 'hadamard'
+                 combination='concatenate',
                  hidden_dim=1024,
                  num_layers=4,
                  output_dim=8,
-                 # Orthogonality (final layer only aligns with Table 2 α) :contentReference[oaicite:8]{index=8}
-                 ortho_weight=0.0,              # α on last layer
-                 ortho_weight_space=0.0,        # keep 0 for Table 2
-                 ortho_weight_time=0.0,         # keep 0 for Table 2
+                 ortho_weight=0.0,
+                 ortho_weight_space=0.0,
+                 ortho_weight_time=0.0,
                  normality_flag=False,
                  ortho_exponent=1,
                  time_grad_penalty_weight=0.0,

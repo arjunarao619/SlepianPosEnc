@@ -1,30 +1,52 @@
+import sys
+import os
+
 import torch
 from torch import nn
-from .spherical_harmonics_ylm import SH as SH_analytic
-from .spherical_harmonics_closed_form import SH as SH_closed_form
+
+# Import SH from master file at /projects/arra4944/SlepianPosEnc/src/spherical_harmonics_ylm.py
+# From models/ -> space-time-encoder/ -> src/
+_src_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+if _src_dir not in sys.path:
+    sys.path.insert(0, _src_dir)
+
+from spherical_harmonics_ylm import SH
+
 
 class SphericalHarmonics(nn.Module):
+    """Spherical harmonics spatial encoder using pre-computed analytic equations."""
+
     def __init__(self, legendre_polys: int = 10, harmonics_calculation="analytic"):
         """
-        legendre_polys: determines the number of legendre polynomials.
-                        more polynomials lead more fine-grained resolutions
-        calculation of spherical harmonics:
-            analytic uses pre-computed equations. This is exact, but works only up to degree 50,
-            closed-form uses one equation but is computationally slower (especially for high degrees)
+        Args:
+            legendre_polys: Number of Legendre polynomial degrees (L).
+                           Output dimension = L^2 basis functions.
+            harmonics_calculation: Only 'analytic' is supported (uses pre-computed equations).
         """
         super(SphericalHarmonics, self).__init__()
         self.L, self.M = int(legendre_polys), int(legendre_polys)
         self.embedding_dim = self.L * self.M
 
-        if harmonics_calculation == "closed-form":
-            self.SH = SH_closed_form
-        elif harmonics_calculation == "analytic":
-            self.SH = SH_analytic
+        if harmonics_calculation != "analytic":
+            raise ValueError(
+                f"Only 'analytic' harmonics calculation is supported. Got: {harmonics_calculation}"
+            )
+
+        self.SH = SH
 
     def forward(self, lonlat):
+        """
+        Compute spherical harmonic features for input coordinates.
+
+        Args:
+            lonlat: (N, 2) tensor with [longitude, latitude] in degrees
+
+        Returns:
+            (N, L^2) tensor of spherical harmonic features
+        """
         lon, lat = lonlat[:, 0], lonlat[:, 1]
 
-        # convert degree to rad
+        # Convert degrees to radians (shift to standard spherical coords)
         phi = torch.deg2rad(lon + 180)
         theta = torch.deg2rad(lat + 90)
 
@@ -36,4 +58,4 @@ class SphericalHarmonics(nn.Module):
                     y = y * torch.ones_like(phi)
                 Y.append(y)
 
-        return torch.stack(Y,dim=-1)
+        return torch.stack(Y, dim=-1)

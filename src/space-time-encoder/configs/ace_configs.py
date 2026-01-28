@@ -1,89 +1,132 @@
 """
-Configuration for ACE dataset experiments
-Extracted and cleaned from STE codebase
+Configuration for ACE dataset experiments.
+
+This module provides centralized configuration for training and evaluation.
 """
 
 import os
 from pathlib import Path
 
 
-# ACE Dataset Configuration
-ACE_CONFIG = {
-    # Data paths
-    'data_root': "/scratch/local/arra4944_images/ace/",
-    'variables': list(range(15, 23)),  # 8 temperature variables
-    
-    # Data splits
-    'train_fraction': 0.01,
-    'val_fraction': 0.01,
-    'test_fraction': 0.01,
-    
-    # Model architecture
-    'spatial_encoder': {
-        'type': 'spherical_harmonics',
-        'L': 20,  # Legendre degree (L^2 = 400 basis functions)
-    },
-    
-    'temporal_encoder': {
-        'type': 'dpss',  # or 'fourier', 'legendre'
-        'dim': 40,
-        'N': 365 * 4,  # 365 days * 4 timesteps per day
-        'NW': 10,  # Time-bandwidth product for DPSS
-    },
-    
-    'combination': 'concatenate',  # or 'outer_product', 'hadamard'
-    
-    'head': {
-        'type': 'fcnet',
-        'hidden_dim': 1024,
-        'num_layers': 4,
-    },
-    
-    # Training
+def get_data_path():
+    """Get ACE data path from environment or default."""
+    return os.environ.get(
+        'ACE_DATA_PATH',
+        '/scratch/local/arra4944_images/ace/'
+    )
+
+
+def get_checkpoint_dir():
+    """Get checkpoint directory from environment or default."""
+    default = Path(__file__).resolve().parent.parent / 'checkpoints'
+    return Path(os.environ.get('ACE_CHECKPOINT_DIR', str(default)))
+
+
+# Default training hyperparameters
+TRAINING_DEFAULTS = {
     'batch_size': 40000,
-    'learning_rate': 0.001,
+    'learning_rate': 1e-3,
     'weight_decay': 1e-5,
     'max_epochs': 500,
-    'patience': 5,
-    
-    # Regularization
-    'ortho_weight': 1.0,
-    'ortho_normality': False,
-    'ortho_exponent': 1,
+    'patience': 15,
 }
 
+# Default data split fractions
+DATA_SPLIT_DEFAULTS = {
+    'train_frac': 0.01,
+    'val_frac': 0.01,
+    'test_frac': 0.01,
+}
 
-def get_ace_file_paths(data_root, n_months=12, start_year=2021, start_month=1):
+# Default regularization settings
+REGULARIZATION_DEFAULTS = {
+    'ortho_weight_final': 1e-3,
+    'ortho_weight_space': 1e-3,
+    'ortho_weight_time': 1e-3,
+    'ortho_exponent': 1,
+    'normality_flag': False,
+    'time_grad_penalty_weight': 1e-6,
+}
+
+# No regularization settings
+REGULARIZATION_NOREG = {
+    'ortho_weight_final': 0.0,
+    'ortho_weight_space': 0.0,
+    'ortho_weight_time': 0.0,
+    'ortho_exponent': 1,
+    'normality_flag': False,
+    'time_grad_penalty_weight': 0.0,
+}
+
+# Default model architecture
+MODEL_DEFAULTS = {
+    'spatial_L': 20,  # L^2 = 400 spatial dimensions
+    'temporal_dim': 40,
+    'combination': 'concatenate',
+    'hidden_dim': 1024,
+    'num_layers': 4,
+    'output_dim': 8,  # 8 temperature variables
+}
+
+# DPSS-specific defaults
+DPSS_DEFAULTS = {
+    'dpss_N': 365 * 4,  # 1460 timesteps (4 per day for 365 days)
+    'dpss_NW': 20,  # Time-bandwidth product
+    'dpss_concentration_threshold': 0.85,
+}
+
+# Variable names for ACE temperature levels
+VAR_NAMES = [
+    "T0 (~26hPa)",
+    "T1 (~99hPa)",
+    "T2 (~203hPa)",
+    "T3 (~337hPa)",
+    "T4 (~504hPa)",
+    "T5 (~690hPa)",
+    "T6 (~850hPa)",
+    "T7 (~964hPa)",
+]
+
+
+def get_ace_file_paths(data_root=None, n_months=12, year=2021):
     """
-    Generate ACE NetCDF file paths
-    
+    Generate ACE NetCDF file paths.
+
     Args:
-        data_root: Root directory for ACE data
+        data_root: Root directory for ACE data (None = use default)
         n_months: Number of months to include
-        start_year: Starting year
-        start_month: Starting month
-        
+        year: Year to load
+
     Returns:
         List of file paths
     """
+    if data_root is None:
+        data_root = get_data_path()
+
     file_paths = []
-    
-    for i in range(n_months):
-        month = (start_month - 1 + i) % 12 + 1
-        year = start_year + (start_month - 1 + i) // 12
-        
-        # ACE file naming: YYYYMM0100.nc
+    for month in range(1, n_months + 1):
         filename = f"{year}{month:02d}0100.nc"
         file_paths.append(os.path.join(data_root, filename))
-    
+
     return file_paths
 
 
-def get_experiment_name(config):
-    """Generate descriptive experiment name from config"""
-    temporal_type = config['temporal_encoder']['type']
-    spatial_type = config['spatial_encoder']['type']
-    combination = config['combination']
-    ortho = 'ortho' if config['ortho_weight'] > 0 else 'no_ortho'
-    
-    return f"{spatial_type}_{temporal_type}_{combination}_{ortho}"
+def get_experiment_name(temporal_type, use_reg=True, nw=None, seed=42):
+    """
+    Generate descriptive experiment name.
+
+    Args:
+        temporal_type: Type of temporal encoding
+        use_reg: Whether regularization is enabled
+        nw: NW parameter for DPSS (optional)
+        seed: Random seed
+
+    Returns:
+        Experiment name string
+    """
+    reg_str = "reg" if use_reg else "noreg"
+
+    if temporal_type == 'dpss' and nw is not None:
+        return f"dpss_NW{nw}_{reg_str}_seed{seed}"
+    else:
+        return f"{temporal_type}_{reg_str}_seed{seed}"
