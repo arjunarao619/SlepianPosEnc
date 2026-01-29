@@ -1,0 +1,46 @@
+# Python
+visualizations/*
+!visualizations/README*
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+*.egg-info/
+dist/
+build/
+
+# Data & outputs (created on run)
+results/
+cache/
+data/
+*.csv
+*.pt
+*.pth
+*.parquet
+
+# Attribution (not part of main pipeline)
+src/slepian_image_augmentation/train_unified_attribution.py
+src/slepian_image_augmentation/scripts/run_attribution_all_regions.sh
+attribution_*.csv
+attribution_*.png
+
+# Logs
+*.log
+wandb/
+lightning_logs/
+logs/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+scratch/
