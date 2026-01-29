@@ -132,28 +132,6 @@ BASELINE_CONFIGS = {
 }
 
 # ============================================================================
-# Model
-# ============================================================================
-class LocationRegressor(nn.Module):
-    """MLP regressor on top of location encoder."""
-    def __init__(self, encoder: nn.Module, hidden_dim: int = 128, dropout: float = 0.1):
-        super().__init__()
-        self.encoder = encoder
-        self.mlp = nn.Sequential(
-            nn.Linear(encoder.n_features, hidden_dim),
-            nn.ReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_dim, hidden_dim // 2),
-            nn.ReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_dim // 2, 1),
-        )
-    
-    def forward(self, coords: torch.Tensor) -> torch.Tensor:
-        features = self.encoder(coords)
-        return self.mlp(features).squeeze(-1)
-
-# ============================================================================
 # Training Functions (reuse from original)
 # ============================================================================
 def create_data_subset(dataset, fraction, batch_size, seed, num_workers=8):

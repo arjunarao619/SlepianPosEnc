@@ -26,7 +26,7 @@ import pandas as pd
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import Dataset, DataLoader, Subset
+from torch.utils.data import Dataset, DataLoader, Subset, TensorDataset
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -43,140 +43,8 @@ from spherical_harmonics_ylm import SH as SH_analytic
 # Import nn module for architecture selection
 from nn import build_location_model
 
-# =============================================================================
-# Concentration Control Utilities
-# =============================================================================
-
-def compute_angular_distances(
-    coords: np.ndarray,
-    cap_center: Tuple[float, float]
-) -> np.ndarray:
-    """Compute angular distance from cap center for all points."""
-    lon1 = np.radians(coords[:, 0])
-    lat1 = np.radians(coords[:, 1])
-    lon2 = np.radians(cap_center[0])
-    lat2 = np.radians(cap_center[1])
-    dlat = lat2 - lat1
-    dlon = lon2 - lon1
-    a = np.sin(dlat / 2)**2 + np.cos(lat1) * np.cos(lat2) * np.sin(dlon / 2)**2
-    return np.degrees(2 * np.arcsin(np.sqrt(a)))
-
-
-def compute_coverage(
-    coords: np.ndarray,
-    cap_center: Tuple[float, float],
-    cap_radius_deg: float
-) -> float:
-    """Compute the percentage of data points within the spherical cap."""
-    angular_dist_deg = compute_angular_distances(coords, cap_center)
-    inside_cap = angular_dist_deg <= cap_radius_deg
-    return 100.0 * inside_cap.sum() / len(coords)
-
-
-def partition_by_cap(
-    coords: np.ndarray,
-    cap_center: Tuple[float, float],
-    cap_radius_deg: float
-) -> np.ndarray:
-    """Partition points into inside-cap and outside-cap."""
-    lon1 = np.radians(coords[:, 0])
-    lat1 = np.radians(coords[:, 1])
-    lon2 = np.radians(cap_center[0])
-    lat2 = np.radians(cap_center[1])
-    dlat = lat2 - lat1
-    dlon = lon2 - lon1
-    a = np.sin(dlat / 2)**2 + np.cos(lat1) * np.cos(lat2) * np.sin(dlon / 2)**2
-    angular_dist_deg = np.degrees(2 * np.arcsin(np.sqrt(a)))
-    return angular_dist_deg <= cap_radius_deg
-
-
-def find_coverage_radius(
-    coords: np.ndarray,
-    cap_center: Tuple[float, float],
-    target_coverage: float = 0.5,
-    tol: float = 0.02
-) -> float:
-    """Binary search for radius that gives target coverage."""
-    low, high = 0.1, 90.0
-    while high - low > 0.1:
-        mid = (low + high) / 2
-        cov = compute_coverage(coords, cap_center, mid) / 100.0
-        if abs(cov - target_coverage) < tol:
-            return mid
-        elif cov < target_coverage:
-            low = mid
-        else:
-            high = mid
-    return mid
-
-
-def create_concentration_splits(
-    coords: np.ndarray,
-    targets: np.ndarray,
-    cap_center: Tuple[float, float],
-    cap_radius_deg: float,
-    test_size_per_region: int = 1000,
-    val_ratio: float = 0.1,
-    seed: int = 42
-) -> Dict:
-    """Create train/val/test splits for concentration control experiment. DEPRECATED."""
-    inside_mask = partition_by_cap(coords, cap_center, cap_radius_deg)
-    inside_idx = np.where(inside_mask)[0]
-    outside_idx = np.where(~inside_mask)[0]
-
-    N_test = min(test_size_per_region, len(inside_idx) // 5, len(outside_idx) // 2)
-
-    rng = np.random.default_rng(seed)
-    inside_test_idx = rng.choice(inside_idx, N_test, replace=False)
-    outside_test_idx = rng.choice(outside_idx, N_test, replace=False)
-    inside_trainval_idx = np.setdiff1d(inside_idx, inside_test_idx)
-
-    n_val = int(len(inside_trainval_idx) * val_ratio)
-    rng.shuffle(inside_trainval_idx)
-    val_idx = inside_trainval_idx[:n_val]
-    train_idx = inside_trainval_idx[n_val:]
-
-    return {
-        'train_idx': train_idx,
-        'val_idx': val_idx,
-        'test_inside_idx': inside_test_idx,
-        'test_outside_idx': outside_test_idx,
-        'n_test_per_region': N_test,
-        'n_inside': len(inside_idx),
-        'n_outside': len(outside_idx),
-        'coverage': len(inside_idx) / len(coords) * 100
-    }
-
-
-def create_standard_splits(
-    coords: np.ndarray,
-    targets: np.ndarray,
-    test_ratio: float = 0.2,
-    val_ratio: float = 0.1,
-    seed: int = 42
-) -> Dict:
-    """Create train/val/test splits for cap sweep baseline (train on ALL data)."""
-    n_total = len(coords)
-    rng = np.random.default_rng(seed)
-
-    all_idx = np.arange(n_total)
-    rng.shuffle(all_idx)
-
-    n_test = int(n_total * test_ratio)
-    n_val = int((n_total - n_test) * val_ratio)
-
-    test_idx = all_idx[:n_test]
-    val_idx = all_idx[n_test:n_test + n_val]
-    train_idx = all_idx[n_test + n_val:]
-
-    return {
-        'train_idx': train_idx,
-        'val_idx': val_idx,
-        'test_idx': test_idx,
-        'n_train': len(train_idx),
-        'n_val': len(val_idx),
-        'n_test': len(test_idx),
-    }
+# Import shared utilities
+from utils.training import create_data_subset
 
 
 # =============================================================================
@@ -184,47 +52,45 @@ def create_standard_splits(
 # =============================================================================
 
 
-
-
 class VanillaSphericalHarmonics(nn.Module):
     """
     Standard spherical harmonics encoder up to degree L.
     Computes features on-the-fly (not cached).
     """
-    
+
     def __init__(self, L: int = 10, verbose: bool = True):
         super().__init__()
         self.L = int(L)
         self.n_features = self.L * self.L
-        
+
         if verbose:
             print(f"Vanilla SH Encoder:")
             print(f"  L={self.L}")
             print(f"  Feature dimension: {self.n_features}")
-    
+
     def forward(self, lonlat: torch.Tensor) -> torch.Tensor:
         """
         Compute SH features for input coordinates.
-        
+
         Args:
             lonlat: [batch, 2] tensor of (longitude, latitude) in degrees
-        
+
         Returns:
             [batch, L^2] tensor of SH features
         """
         batch_shape = lonlat.shape[:-1]
         coords = lonlat.reshape(-1, 2)
-        
+
         # Convert to spherical coordinates
         lon = coords[:, 0]
         lat = coords[:, 1]
         phi = torch.deg2rad(lon + 180.0)
         theta = torch.deg2rad(lat + 90.0)
-        
+
         # Tiny clamp to avoid issues near poles
         eps = 1e-12
         theta = torch.clamp(theta, eps, math.pi - eps)
-        
+
         # Compute SH features
         features = []
         for l in range(self.L):
@@ -236,78 +102,15 @@ class VanillaSphericalHarmonics(nn.Module):
                 elif y.ndim == 0:
                     y = torch.full_like(theta, y.item())
                 features.append(y)
-        
+
         features = torch.stack(features, dim=-1)  # [N, L^2]
         features = torch.nan_to_num(features, nan=0.0, posinf=0.0, neginf=0.0)
         return features.reshape(*batch_shape, -1)
 
 
 # =============================================================================
-# Model
-# =============================================================================
-
-class LocationRegressor(nn.Module):
-    """
-    MLP regressor on top of location encoder.
-    Same architecture as Slepian version for fair comparison.
-    """
-    
-    def __init__(self, encoder: nn.Module, hidden_dim: int = 128, dropout: float = 0.1):
-        super().__init__()
-        self.encoder = encoder
-        self.mlp = nn.Sequential(
-            nn.Linear(encoder.n_features, hidden_dim),
-            nn.ReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_dim, hidden_dim // 2),
-            nn.ReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_dim // 2, 1),
-        )
-    
-    def forward(self, coords: torch.Tensor) -> torch.Tensor:
-        features = self.encoder(coords)
-        return self.mlp(features).squeeze(-1)
-
-
-# =============================================================================
 # Training and Evaluation
 # =============================================================================
-
-def create_data_subset(
-    dataset: Dataset,
-    fraction: float,
-    batch_size: int,
-    seed: int,
-    num_workers: int = 8
-) -> DataLoader:
-    """
-    Create a random subset of the dataset.
-    
-    Args:
-        dataset: Full dataset
-        fraction: Fraction to keep (0-1)
-        batch_size: Batch size for loader
-        seed: Random seed for reproducibility
-        num_workers: Number of data loading workers
-    
-    Returns:
-        DataLoader for the subset
-    """
-    n_total = len(dataset)
-    n_subset = max(1, int(fraction * n_total))
-    
-    rng = np.random.default_rng(seed)
-    indices = rng.choice(n_total, size=n_subset, replace=False)
-    
-    subset = Subset(dataset, indices.tolist())
-    loader = DataLoader(
-        subset, batch_size=batch_size, shuffle=True,
-        num_workers=num_workers, pin_memory=True,
-        persistent_workers=(num_workers > 0)
-    )
-    return loader
-
 
 def train_model(
     model: nn.Module,
@@ -321,30 +124,16 @@ def train_model(
 ) -> Tuple[List[float], List[float]]:
     """
     Train model with early stopping.
-    
-    Args:
-        model: Model to train
-        train_loader: Training data loader
-        val_loader: Validation data loader
-        device: Device to train on
-        epochs: Maximum number of epochs
-        lr: Learning rate
-        patience: Early stopping patience
-        verbose: Print progress
-    
-    Returns:
-        train_losses: List of training losses per epoch
-        val_losses: List of validation losses per epoch
     """
     optimizer = optim.Adam(model.parameters(), lr=lr)
     criterion = nn.MSELoss()
-    
+
     train_losses = []
     val_losses = []
     best_val_loss = float('inf')
     patience_counter = 0
     best_state = None
-    
+
     for epoch in range(epochs):
         # Training
         model.train()
@@ -352,18 +141,18 @@ def train_model(
         for coords, targets in train_loader:
             coords = coords.to(device, non_blocking=True)
             targets = targets.to(device, non_blocking=True)
-            
+
             optimizer.zero_grad(set_to_none=True)
             predictions = model(coords)
             loss = criterion(predictions, targets)
             loss.backward()
             optimizer.step()
-            
+
             train_loss += loss.item() * len(targets)
-        
+
         train_loss /= len(train_loader.dataset)
         train_losses.append(train_loss)
-        
+
         # Validation
         model.eval()
         val_loss = 0.0
@@ -371,14 +160,14 @@ def train_model(
             for coords, targets in val_loader:
                 coords = coords.to(device, non_blocking=True)
                 targets = targets.to(device, non_blocking=True)
-                
+
                 predictions = model(coords)
                 loss = criterion(predictions, targets)
                 val_loss += loss.item() * len(targets)
-        
+
         val_loss /= len(val_loader.dataset)
         val_losses.append(val_loss)
-        
+
         # Early stopping
         if val_loss < best_val_loss:
             best_val_loss = val_loss
@@ -392,14 +181,14 @@ def train_model(
                 if best_state is not None:
                     model.load_state_dict(best_state)
                 break
-        
+
         if verbose and epoch % 10 == 0:
             print(f"Epoch {epoch:03d} | Train: {train_loss:.6f} | Val: {val_loss:.6f}")
-    
+
     # Load best model
     if best_state is not None:
         model.load_state_dict(best_state)
-    
+
     return train_losses, val_losses
 
 
@@ -413,40 +202,30 @@ def evaluate_model(
 ) -> Dict:
     """
     Evaluate model and compute metrics.
-    
-    Args:
-        model: Trained model
-        test_loader: Test data loader
-        device: Device to evaluate on
-        y_min: Minimum target value (for denormalization)
-        y_max: Maximum target value (for denormalization)
-    
-    Returns:
-        Dictionary with metrics
     """
     model.eval()
     predictions = []
     targets = []
-    
+
     for coords, y in test_loader:
         coords = coords.to(device, non_blocking=True)
         pred = model(coords)
         predictions.append(pred.cpu())
         targets.append(y)
-    
+
     predictions = torch.cat(predictions).numpy()
     targets = torch.cat(targets).numpy()
-    
+
     # Compute metrics
     mse = np.mean((predictions - targets) ** 2)
     mae = np.mean(np.abs(predictions - targets))
     r2 = 1.0 - np.sum((targets - predictions) ** 2) / np.sum((targets - targets.mean()) ** 2)
-    
+
     # Convert back to dollars
     predictions_dollars = predictions * (y_max - y_min) + y_min
     targets_dollars = targets * (y_max - y_min) + y_min
     mae_dollars = np.mean(np.abs(predictions_dollars - targets_dollars))
-    
+
     return {
         'mse': float(mse),
         'mae': float(mae),
@@ -454,34 +233,6 @@ def evaluate_model(
         'mae_dollars': float(mae_dollars),
         'predictions': predictions,
         'targets': targets
-    }
-
-
-@torch.no_grad()
-def evaluate_concentration(
-    model: nn.Module,
-    test_inside_loader: DataLoader,
-    test_outside_loader: DataLoader,
-    device: torch.device,
-    y_min: float,
-    y_max: float
-) -> Dict:
-    """Evaluate model separately on inside and outside test sets."""
-    metrics_inside = evaluate_model(model, test_inside_loader, device, y_min, y_max)
-    metrics_outside = evaluate_model(model, test_outside_loader, device, y_min, y_max)
-
-    delta_r2 = metrics_inside['r2'] - metrics_outside['r2']
-
-    return {
-        'r2_inside': metrics_inside['r2'],
-        'r2_outside': metrics_outside['r2'],
-        'delta_r2': delta_r2,
-        'mse_inside': metrics_inside['mse'],
-        'mse_outside': metrics_outside['mse'],
-        'mae_inside': metrics_inside['mae'],
-        'mae_outside': metrics_outside['mae'],
-        'mae_dollars_inside': metrics_inside['mae_dollars'],
-        'mae_dollars_outside': metrics_outside['mae_dollars'],
     }
 
 
@@ -503,7 +254,7 @@ def save_training_curves(
     ax.set_title('Training Curves', fontsize=14)
     ax.grid(True, alpha=0.3)
     ax.legend(fontsize=11)
-    
+
     fig.tight_layout()
     fig.savefig(save_path, dpi=150, bbox_inches='tight')
     plt.close(fig)
@@ -525,7 +276,7 @@ def save_predictions_plot(
     ax.grid(True, alpha=0.3)
     ax.legend(fontsize=11)
     ax.set_aspect('equal')
-    
+
     fig.tight_layout()
     fig.savefig(save_path, dpi=150, bbox_inches='tight')
     plt.close(fig)
@@ -538,11 +289,11 @@ def save_predictions_plot(
 
 def main():
     parser = argparse.ArgumentParser(description="California Housing with Vanilla SH")
-    
+
     # Model configuration
     parser.add_argument("--L", type=int, default=10,
                        help="Maximum degree for spherical harmonics")
-    
+
     # Training configuration
     parser.add_argument("--batch-size", type=int, default=512)
     parser.add_argument("--epochs", type=int, default=200)
@@ -551,14 +302,14 @@ def main():
     parser.add_argument("--hidden-dim", type=int, default=128)
     parser.add_argument("--dropout", type=float, default=0.1)
     parser.add_argument("--num-workers", type=int, default=16)
-    
+
     # Experiment configuration
     parser.add_argument("--label-fracs", type=str, default="0.01,0.10,0.25,0.50,0.75,1.00",
                        help="Comma-separated training fractions")
     parser.add_argument("--n-runs", type=int, default=1,
                        help="Number of runs per configuration for variability")
     parser.add_argument("--seed", type=int, default=42)
-    
+
     # Output configuration
     parser.add_argument("--csv-path", type=str, default='results/cali/results.csv',
                        help="Path to save CSV results")
@@ -571,16 +322,6 @@ def main():
     parser.add_argument("--arch", type=str, default="mlp",
                        choices=["linear", "mlp", "resmlp", "siren", "glu"],
                        help="Neural network architecture (default: mlp)")
-
-    # Cap sweep experiment: baseline for comparing against Slepian
-    parser.add_argument("--cap-sweep", action="store_true",
-                       help="Run cap sweep baseline: Global SH is constant across cap radii (provides flat baseline)")
-    parser.add_argument("--target-coverages", type=str, default="0.1,0.5,1.0",
-                       help="Comma-separated target coverage fractions (used for reporting only)")
-    parser.add_argument("--test-ratio", type=float, default=0.2,
-                       help="Fraction of data for test set (default: 0.2)")
-    parser.add_argument("--val-ratio", type=float, default=0.1,
-                       help="Fraction of remaining data for validation (default: 0.1)")
 
     args = parser.parse_args()
 
@@ -602,165 +343,12 @@ def main():
     y_min, y_max = targets.min(), targets.max()
     targets_norm = (targets - y_min) / (y_max - y_min + 1e-12)
 
-    # =========================================================================
-    # CAP SWEEP BASELINE (Global SH - independent of cap radius)
-    # =========================================================================
-    if args.cap_sweep:
-        from torch.utils.data import TensorDataset
-
-        print("\n" + "=" * 70)
-        print("CAP SWEEP BASELINE (Global SH)")
-        print("Global SH is INDEPENDENT of cap radius - provides flat baseline")
-        print("Train on ALL data, evaluate on ALL test data")
-        print("=" * 70)
-
-        target_coverages = [float(x) for x in args.target_coverages.split(',')]
-
-        # Create standard splits (SAME as Slepian for fair comparison)
-        splits = create_standard_splits(
-            coords, targets_norm,
-            test_ratio=args.test_ratio,
-            val_ratio=args.val_ratio,
-            seed=args.seed
-        )
-
-        print(f"\nData splits (SAME as Slepian):")
-        print(f"  Train: {splits['n_train']:,}")
-        print(f"  Val: {splits['n_val']:,}")
-        print(f"  Test: {splits['n_test']:,}")
-
-        print(f"\nGlobal SH: L={args.L}, feature_dim={args.L**2}")
-        print(f"(This baseline is CONSTANT across all target coverages)")
-
-        # Create datasets
-        train_dataset = TensorDataset(
-            torch.tensor(coords[splits['train_idx']], dtype=torch.float32),
-            torch.tensor(targets_norm[splits['train_idx']], dtype=torch.float32)
-        )
-        val_dataset = TensorDataset(
-            torch.tensor(coords[splits['val_idx']], dtype=torch.float32),
-            torch.tensor(targets_norm[splits['val_idx']], dtype=torch.float32)
-        )
-        test_dataset = TensorDataset(
-            torch.tensor(coords[splits['test_idx']], dtype=torch.float32),
-            torch.tensor(targets_norm[splits['test_idx']], dtype=torch.float32)
-        )
-
-        # Create data loaders
-        train_loader = DataLoader(
-            train_dataset, batch_size=args.batch_size, shuffle=True,
-            num_workers=args.num_workers, pin_memory=True
-        )
-        val_loader = DataLoader(
-            val_dataset, batch_size=args.batch_size, shuffle=False,
-            num_workers=args.num_workers, pin_memory=True
-        )
-        test_loader = DataLoader(
-            test_dataset, batch_size=args.batch_size, shuffle=False,
-            num_workers=args.num_workers, pin_memory=True
-        )
-
-        csv_results = []
-
-        # Run multiple times for error bars
-        for run_idx in range(args.n_runs):
-            run_seed = args.seed + run_idx
-            torch.manual_seed(run_seed)
-            np.random.seed(run_seed)
-
-            print(f"\nRun {run_idx + 1}/{args.n_runs} (seed={run_seed})")
-
-            # Create fresh model
-            encoder = VanillaSphericalHarmonics(L=args.L, verbose=(run_idx == 0))
-            model = build_location_model(
-                encoder, task="regression", arch=args.arch,
-                hidden_dim=args.hidden_dim, dropout=args.dropout
-            ).to(device)
-
-            # Train on ALL data
-            t_start = time.time()
-            train_losses, val_losses = train_model(
-                model, train_loader, val_loader, device,
-                epochs=args.epochs, lr=args.lr, patience=args.patience,
-                verbose=False
-            )
-            train_time = time.time() - t_start
-
-            # Evaluate on ALL test data (single R² for this model)
-            metrics = evaluate_model(model, test_loader, device, y_min, y_max)
-
-            print(f"  R²={metrics['r2']:.4f}, MAE=${metrics['mae_dollars']:,.0f}, time={train_time:.1f}s")
-
-            # Record ONE row per target_coverage (same R² for all since SH is cap-independent)
-            for target_cov in target_coverages:
-                csv_results.append({
-                    'method': 'global_sh',
-                    'dataset': 'california',
-                    'target_coverage': target_cov,
-                    'cap_radius_deg': None,  # N/A for global SH
-                    'actual_coverage_pct': target_cov * 100,  # For plotting alignment
-                    'L_global': args.L,
-                    'L_slepian': None,
-                    'lambda_thresh': None,
-                    'feature_dim': args.L ** 2,
-                    'slepian_modes_kept': 0,
-                    'run': run_idx + 1,
-                    'seed': run_seed,
-                    'r2': metrics['r2'],
-                    'rmse_raw': np.sqrt(metrics['mse']) * (y_max - y_min),
-                    'mae_raw': metrics['mae_dollars'],
-                    'n_train': splits['n_train'],
-                    'n_val': splits['n_val'],
-                    'n_test': splits['n_test'],
-                    'train_time_sec': train_time,
-                    'arch': args.arch,
-                })
-
-        # Save CSV results
-        if args.csv_path:
-            df_results = pd.DataFrame(csv_results)
-            os.makedirs(os.path.dirname(args.csv_path), exist_ok=True)
-            df_results.to_csv(args.csv_path, index=False)
-            print(f"\n{'=' * 70}")
-            print(f"Saved cap sweep baseline to {args.csv_path}")
-
-            # Print summary
-            print("\nGlobal SH Baseline (CONSTANT across coverages):")
-            summary = df_results.groupby('run')['r2'].first()
-            print(f"  Mean R²: {summary.mean():.4f} ± {summary.std():.4f}")
-
-        # Save JSON metadata
-        if args.results_json:
-            json_data = {
-                'experiment': 'cap_sweep',
-                'method': 'global_sh',
-                'note': 'Global SH is independent of cap radius - same R² for all coverages',
-                'configuration': vars(args),
-                'target_coverages': target_coverages,
-                'splits': {
-                    'n_train': int(splits['n_train']),
-                    'n_val': int(splits['n_val']),
-                    'n_test': int(splits['n_test']),
-                },
-                'csv_path': args.csv_path
-            }
-            os.makedirs(os.path.dirname(args.results_json), exist_ok=True)
-            with open(args.results_json, 'w') as f:
-                json.dump(json_data, f, indent=2)
-            print(f"Saved metadata to {args.results_json}")
-
-        return  # Exit after cap sweep baseline
-
-    # =========================================================================
-    # STANDARD EXPERIMENT (original code path)
-    # =========================================================================
-    
     print(f"Dataset statistics:")
     print(f"  Total samples: {len(coords)}")
     print(f"  Longitude range: [{coords[:, 0].min():.2f}, {coords[:, 0].max():.2f}]")
     print(f"  Latitude range: [{coords[:, 1].min():.2f}, {coords[:, 1].max():.2f}]")
     print(f"  Target range: ${y_min:.0f}k - ${y_max:.0f}k")
-    
+
     # Train/val/test split
     X_train, X_temp, y_train, y_temp = train_test_split(
         coords, targets_norm, test_size=0.4, random_state=args.seed
@@ -768,73 +356,71 @@ def main():
     X_val, X_test, y_val, y_test = train_test_split(
         X_temp, y_temp, test_size=0.5, random_state=args.seed
     )
-    
+
     print(f"Dataset splits: train={len(X_train)}, val={len(X_val)}, test={len(X_test)}")
-    
+
     # Create datasets
-    from torch.utils.data import TensorDataset
-    
     train_dataset = TensorDataset(
         torch.tensor(X_train, dtype=torch.float32),
         torch.tensor(y_train, dtype=torch.float32)
     )
-    
+
     val_dataset = TensorDataset(
         torch.tensor(X_val, dtype=torch.float32),
         torch.tensor(y_val, dtype=torch.float32)
     )
-    
+
     test_dataset = TensorDataset(
         torch.tensor(X_test, dtype=torch.float32),
         torch.tensor(y_test, dtype=torch.float32)
     )
-    
+
     # Fixed validation and test loaders
     val_loader = DataLoader(
         val_dataset, batch_size=args.batch_size, shuffle=False,
         num_workers=args.num_workers, pin_memory=True,
         persistent_workers=(args.num_workers > 0)
     )
-    
+
     test_loader = DataLoader(
         test_dataset, batch_size=args.batch_size, shuffle=False,
         num_workers=args.num_workers, pin_memory=True,
         persistent_workers=(args.num_workers > 0)
     )
-    
+
     # Create output directory
     os.makedirs(args.fig_dir, exist_ok=True)
-    
+
     # Run experiments
     label_fracs = [float(x) for x in args.label_fracs.split(',')]
     csv_results = []
-    
+
     print(f"\nRunning experiments with L={args.L} (dim={args.L**2})")
     print(f"Training fractions: {label_fracs}")
     print(f"Runs per configuration: {args.n_runs}")
-    
+
     for run_idx in range(args.n_runs):
         run_seed = args.seed + run_idx
         print(f"\n{'='*60}")
         print(f"RUN {run_idx + 1}/{args.n_runs} (seed={run_seed})")
         print(f"{'='*60}")
-        
+
         for frac in label_fracs:
             pct = int(frac * 100)
             print(f"\nTraining with {pct}% of data...")
-            
+
             # Create subset loader with run-specific seed
             train_subset_loader = create_data_subset(
                 train_dataset, frac, args.batch_size, run_seed, args.num_workers
             )
-            
+
             # Create fresh model
             encoder = VanillaSphericalHarmonics(L=args.L, verbose=(run_idx == 0 and frac == label_fracs[0]))
             model = build_location_model(
                 encoder, task="regression", arch=args.arch,
                 hidden_dim=args.hidden_dim, dropout=args.dropout
             ).to(device)
-            
+
             # Train
             t_start = time.time()
             train_losses, val_losses = train_model(
@@ -843,23 +429,23 @@ def main():
                 verbose=(run_idx == 0)  # Only verbose on first run
             )
             train_time = time.time() - t_start
-            
+
             # Evaluate
             metrics = evaluate_model(model, test_loader, device, y_min, y_max)
-            
+
             print(f"[{pct:3d}%] R²={metrics['r2']:.4f}, "
                   f"MSE={metrics['mse']:.6f}, "
                   f"MAE=${metrics['mae_dollars']:,.0f}, "
                   f"Time={train_time:.1f}s")
-            
+
             # Save plots (only on first run to avoid overwriting)
             if run_idx == 0:
                 save_path = os.path.join(args.fig_dir, f"train_curves_{pct}pct.png")
                 save_training_curves(train_losses, val_losses, save_path)
-                
+
                 save_path = os.path.join(args.fig_dir, f"predictions_{pct}pct.png")
                 save_predictions_plot(metrics['predictions'], metrics['targets'], save_path)
-            
+
             # Record results
             csv_results.append({
                 'method': 'vanilla_sh',
@@ -879,26 +465,26 @@ def main():
                 'val_loss': val_losses[-1] if val_losses else 0,
                 'train_time_sec': train_time
             })
-    
+
     # Save CSV results
     if args.csv_path:
         os.makedirs(os.path.dirname(args.csv_path), exist_ok=True)
         df_results = pd.DataFrame(csv_results)
         df_results.to_csv(args.csv_path, index=False)
         print(f"\nSaved results to {args.csv_path}")
-        
+
         # Print summary statistics
-        print("\nSummary Statistics (mean ± std across runs):")
+        print("\nSummary Statistics (mean +/- std across runs):")
         summary = df_results.groupby('train_percent')[['r2', 'mae', 'mae_dollars']].agg(['mean', 'std'])
         summary.columns = ['_'.join(col).strip() for col in summary.columns.values]
         summary = summary.round(4)
         print(summary)
-        
+
         # Print best performance
         best_idx = df_results.groupby('train_percent')['r2'].mean().idxmax()
         best_r2 = df_results[df_results['train_percent'] == best_idx]['r2'].mean()
         print(f"\nBest average R²: {best_r2:.4f} at {best_idx}% training data")
-    
+
     # Save JSON metadata
     if args.results_json:
         json_data = {
@@ -918,7 +504,7 @@ def main():
             'csv_path': args.csv_path,
             'device': str(device)
         }
-        
+
         os.makedirs(os.path.dirname(args.results_json), exist_ok=True)
         with open(args.results_json, 'w') as f:
             json.dump(json_data, f, indent=2)

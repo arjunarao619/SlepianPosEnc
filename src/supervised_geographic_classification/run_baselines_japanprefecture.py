@@ -332,29 +332,6 @@ def create_prefecture_subset(
     return loader
 
 
-
-class PrefectureClassifier(nn.Module):
-    """MLP classifier for prefecture prediction using baseline encoders."""
-    
-    def __init__(self, encoder: nn.Module, n_classes: int, hidden_dim: int = 128, dropout: float = 0.1):
-        super().__init__()
-        self.encoder = encoder
-        
-        self.classifier = nn.Sequential(
-            nn.Linear(encoder.n_features, hidden_dim),
-            nn.ReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_dim, hidden_dim // 2),
-            nn.ReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_dim // 2, n_classes)
-        )
-    
-    def forward(self, coords: torch.Tensor) -> torch.Tensor:
-        features = self.encoder(coords)
-        return self.classifier(features)
-
-
 # =============================================================================
 # Training and Evaluation
 # =============================================================================
