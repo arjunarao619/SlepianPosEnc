@@ -1,4 +1,4 @@
-# Space-Time Encoder for ACE Temperature Prediction
+# Space-Time Encoder w/Discrete Prolate Spheroidal Sequences
 
 Spherical harmonics (spatial) + temporal encodings for atmospheric temperature regression on the ACE dataset.
 
@@ -19,7 +19,7 @@ pip install torch numpy scipy netCDF4
 
 Set the data path:
 ```bash
-export ACE_DATA_PATH="/path/to/ace/"  # default: /scratch/local/arra4944_images/ace/
+export ACE_DATA_PATH="/path/to/ace/" 
 ```
 
 Expected files (12 monthly NetCDF files for year 2021):
