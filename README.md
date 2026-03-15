@@ -1,4 +1,6 @@
+
 # Localized, High-Resolution Geographic Representations with Slepian Functions
+[![arXiv](https://img.shields.io/badge/arXiv-2602.00392-b31b1b.svg)](https://arxiv.org/abs/2602.00392) 
 
 <p align="center">
   <img src="visualizations/README_gif.gif" style="display: block; margin: 0 auto; width: 80%;">
@@ -85,3 +87,16 @@ bash run_california_experiments.sh
 
 If you use this code, please cite: <update arxiv>
 ``` -->
+
+## Citation
+
+If you find this code or our method useful in your research, please consider citing our paper:
+
+```bibtex
+@article{rao2026localized,
+  title={Localized, High-resolution Geographic Representations with Slepian Functions},
+  author={Rao, Arjun and Crasto, Ruth and Ooms, Tessa and Rolnick, David and Klemmer, Konstantin and Ru{\ss}wurm, Marc},
+  journal={arXiv preprint arXiv:2602.00392},
+  year={2026}
+}
+```
