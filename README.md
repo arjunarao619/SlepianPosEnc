@@ -1,6 +1,8 @@
 
 # Localized, High-Resolution Geographic Representations with Slepian Functions
 [![arXiv](https://img.shields.io/badge/arXiv-2602.00392-b31b1b.svg)](https://arxiv.org/abs/2602.00392) 
+[![Video](https://img.shields.io/badge/Video-YouTube-red?logo=youtube)](https://www.youtube.com/watch?v=QqEozXMNj90&t=1s)
+[![ICML 2026](https://img.shields.io/badge/ICML-2026-blue)](https://icml.cc/virtual/2026/poster/62670)
 
 <p align="center">
   <img src="visualizations/README_gif.gif" style="display: block; margin: 0 auto; width: 80%;">
