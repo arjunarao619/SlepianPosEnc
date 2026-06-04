@@ -94,7 +94,7 @@ If you find this code or our method useful in your research, please consider cit
 
 ```bibtex
 @inproceedings{
-anonymous2026localized,
+rao2026localized,
 title={Localized, High-resolution Geographic Representations with Slepian Functions},
 author={Anonymous},
 booktitle={Forty-third International Conference on Machine Learning},
