@@ -94,12 +94,11 @@ If you find this code or our method useful in your research, please consider cit
 
 ```bibtex
 @inproceedings{
-rao2026localized,
+anonymous2026localized,
 title={Localized, High-resolution Geographic Representations with Slepian Functions},
 author={Anonymous},
 booktitle={Forty-third International Conference on Machine Learning},
 year={2026},
 url={https://openreview.net/forum?id=eWQQ0tO0kB}
-}ear={2026}
 }
 ```
