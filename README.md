@@ -93,10 +93,13 @@ If you use this code, please cite: <update arxiv>
 If you find this code or our method useful in your research, please consider citing our paper:
 
 ```bibtex
-@article{rao2026localized,
-  title={Localized, High-resolution Geographic Representations with Slepian Functions},
-  author={Rao, Arjun and Crasto, Ruth and Ooms, Tessa and Rolnick, David and Klemmer, Konstantin and Ru{\ss}wurm, Marc},
-  journal={arXiv preprint arXiv:2602.00392},
-  year={2026}
+@inproceedings{
+rao2026localized,
+title={Localized, High-resolution Geographic Representations with Slepian Functions},
+author={Anonymous},
+booktitle={Forty-third International Conference on Machine Learning},
+year={2026},
+url={https://openreview.net/forum?id=eWQQ0tO0kB}
+}ear={2026}
 }
 ```
